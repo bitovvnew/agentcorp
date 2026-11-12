@@ -23,13 +23,13 @@ export interface AgentCorpConfig {
   budget?: { perAgentTokens?: number; totalTokens?: number };
 }
 
-const ENV_FOR: Record<ProviderId, string> = {
+const ENV_FOR = {
   openai: 'OPENAI_API_KEY',
   anthropic: 'ANTHROPIC_API_KEY',
   gemini: 'GEMINI_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
-  ollama: 'OLLAMA_BASE_URL',
-};
+} as const;
+const managedEnv = new Map<string, string>();
 
 export function configDir(): string {
   return path.resolve(process.env.AGENTCORP_HOME || '.agentcorp');
@@ -75,12 +75,22 @@ export function loadDotEnv(file = path.resolve('.env')): void {
 
 /** Put saved keys into process.env (without overriding anything already set) and mark them secret. */
 export function applyConfig(c: AgentCorpConfig | undefined): void {
-  if (!c) return;
-  for (const [p, value] of Object.entries(c.keys) as [ProviderId, string][]) {
-    if (!value) continue;
-    registerSecret(value);
-    const env = ENV_FOR[p];
-    if (!process.env[env]) process.env[env] = value;
+  for (const [name, value] of managedEnv) {
+    if (process.env[name] === value) delete process.env[name];
   }
-  if (c.ollamaURL && !process.env.OLLAMA_BASE_URL) process.env.OLLAMA_BASE_URL = c.ollamaURL;
+  managedEnv.clear();
+
+  for (const [provider, name] of Object.entries(ENV_FOR)) {
+    const value = c?.keys[provider as ProviderId];
+    registerSecret(value);
+    applyEnv(name, value);
+  }
+  applyEnv('OLLAMA_BASE_URL', c?.ollamaURL);
+}
+
+function applyEnv(name: string, value: string | undefined): void {
+  if (value && !process.env[name]) {
+    process.env[name] = value;
+    managedEnv.set(name, value);
+  }
 }

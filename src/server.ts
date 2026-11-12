@@ -126,6 +126,7 @@ export async function serve(opts: ServeOptions): Promise<RunningServer> {
           configured: !!cfg?.league,
           lang: cfg?.lang,
           env: detectEnv(),
+          ollamaURL: cfg?.ollamaURL,
           saved: Object.fromEntries(Object.entries(cfg?.keys ?? {}).map(([k, v]) => [k, maskKey(v)])),
           league: cfg?.league,
           providers: PROVIDERS,
@@ -135,38 +136,40 @@ export async function serve(opts: ServeOptions): Promise<RunningServer> {
         });
       }
       if (p === '/api/setup/models' && req.method === 'POST') {
+        if (!opts.startLeague || sim) return json(res, { error: 'not in setup mode' }, 409);
         const body = await readBody(req);
         const provider = String(body.provider) as ProviderId;
         if (!PROVIDERS.some((x) => x.id === provider)) return json(res, { error: 'unknown provider' }, 400);
         const key = typeof body.key === 'string' && body.key.trim() ? body.key.trim() : loadConfig()?.keys[provider];
-        return json(res, await probe(provider, key, typeof body.baseURL === 'string' ? body.baseURL : undefined));
+        const baseURL = provider === 'ollama' && typeof body.baseURL === 'string' ? body.baseURL : undefined;
+        return json(res, await probe(provider, key, baseURL));
       }
-      if (p === '/api/setup/save' && req.method === 'POST') {
+      if (p === '/api/setup/start' && req.method === 'POST') {
+        if (!opts.startLeague) return json(res, { error: 'not in setup mode' }, 409);
         const body = await readBody(req);
+        if (sim) return json(res, { error: 'already running' }, 409);
         const prev: AgentCorpConfig = loadConfig() ?? { version: 1, keys: {} };
         const keys = { ...prev.keys };
-        for (const [k, v] of Object.entries((body.keys ?? {}) as Record<string, unknown>)) {
-          if (!PROVIDERS.some((x) => x.id === k)) continue;
-          if (typeof v === 'string' && v.trim()) keys[k as ProviderId] = v.trim();
-          if (v === null) delete keys[k as ProviderId];
+        for (const { id, needsKey } of PROVIDERS) {
+          const value = (body.keys as Record<string, unknown> | undefined)?.[id];
+          if (!needsKey) continue;
+          if (typeof value === 'string' && value.trim()) keys[id] = value.trim();
+          if (value === null) delete keys[id];
         }
+        const league = readLeague(body.league);
         const next: AgentCorpConfig = {
           ...prev, version: 1, keys,
           lang: typeof body.lang === 'string' ? body.lang : prev.lang,
-          league: (body.league as LeagueSetup | undefined) ?? prev.league,
+          league,
           ollamaURL: typeof body.ollamaURL === 'string' ? body.ollamaURL : prev.ollamaURL,
         };
-        saveConfig(next);
         applyConfig(next);
-        return json(res, { ok: true });
-      }
-      if (p === '/api/setup/start' && req.method === 'POST') {
-        if (sim) return json(res, { error: 'already running' }, 409);
-        if (!opts.startLeague) return json(res, { error: 'not in setup mode' }, 400);
-        const body = await readBody(req);
         try {
-          attach(opts.startLeague(body.league as LeagueSetup));
+          const nextSim = opts.startLeague(league);
+          saveConfig(next);
+          attach(nextSim);
         } catch (err) {
+          applyConfig(prev);
           return json(res, { error: redact(err) }, 400);
         }
         return json(res, status());
@@ -177,8 +180,9 @@ export async function serve(opts: ServeOptions): Promise<RunningServer> {
     }
   });
 
-  const port = await listen(server, opts.port, opts.host ?? '127.0.0.1');
-  const url = `http://localhost:${port}`;
+  const host = opts.host ?? '127.0.0.1';
+  const port = await listen(server, opts.port, host);
+  const url = `http://${host.includes(':') ? `[${host}]` : host}:${port}`;
   if (sim) attach(sim);
   else if (opts.replay) resolveDone(opts.replay);
 
@@ -190,6 +194,24 @@ export async function serve(opts: ServeOptions): Promise<RunningServer> {
       for (const c of clients) c.end();
       server.close(() => resolve());
     }),
+  };
+}
+
+function readLeague(input: unknown): LeagueSetup {
+  const league = input as LeagueSetup | undefined;
+  if (!league || !Array.isArray(league.companies) || league.companies.length < 1 || league.companies.length > 8
+    || typeof league.scenario !== 'string' || !Number.isSafeInteger(league.seed)
+    || !Number.isInteger(league.weeks) || league.weeks < 8 || league.weeks > 260
+    || league.companies.some((c) => !c || typeof c.brain !== 'string' || typeof c.template !== 'string'
+      || (c.name !== undefined && typeof c.name !== 'string'))) {
+    throw new Error('Invalid league configuration');
+  }
+  return {
+    companies: league.companies.map(({ brain, template, name }) => ({ brain, template, name })),
+    scenario: league.scenario,
+    seed: league.seed,
+    weeks: league.weeks,
+    decideEvery: 4,
   };
 }
 

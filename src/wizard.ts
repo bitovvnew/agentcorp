@@ -5,7 +5,7 @@ import { loadConfig, saveConfig, applyConfig, configPath, type AgentCorpConfig }
 import { listScenarios, listTemplates } from './plugins/index.js';
 import { PROVIDERS, discover, envKey, probe, type ModelInfo, type ProviderId } from './providers.js';
 import { maskKey } from './security.js';
-import { LANGS, translator, type Lang } from './i18n.js';
+import { detectLang, LANGS, translator } from './i18n.js';
 import type { CompanySpec } from './types.js';
 
 const tty = process.stdout.isTTY && !process.env.NO_COLOR;
@@ -47,7 +47,7 @@ export async function runWizard(langArg?: string): Promise<AgentCorpConfig> {
   try {
     const prev = loadConfig() ?? { version: 1 as const, keys: {} };
     // 0. language
-    let lang = (langArg || prev.lang || 'en') as Lang;
+    let lang = detectLang(langArg || prev.lang);
     let t = translator(lang);
     console.log(`\n${b('AgentCorp')} — ${t('cli.wizard.title')}\n`);
     const langs = LANGS.map((l, i) => `${i + 1}) ${translator(l)('lang.name')}`).join('  ');
@@ -72,8 +72,8 @@ export async function runWizard(langArg?: string): Promise<AgentCorpConfig> {
     if (found.ollama.ok) models.ollama = found.ollama.models;
     for (const pr of PROVIDERS.filter((x) => x.needsKey)) {
       const existing = keys[pr.id] || envKey(pr.id);
-      const want = (await p.ask(`  ${pr.label}: ${existing ? t('cli.wizard.useExisting') : t('cli.wizard.addKey')} (y/n)`, existing ? 'y' : 'n')).toLowerCase();
-      if (!want.startsWith('y')) continue;
+      const want = (await p.ask(`  ${pr.label}: ${existing ? t('cli.wizard.useExisting') : t('cli.wizard.addKey')} (${existing ? 'y/n/new' : 'y/n'})`, existing ? 'y' : 'n')).toLowerCase();
+      if (!want.startsWith('y') && want !== 'new') continue;
       let key = existing;
       if (!existing || want === 'new') key = await p.secret(`    ${t('cli.wizard.pasteKey', { url: pr.keyUrl })}`);
       if (!key) continue;
@@ -126,7 +126,7 @@ export async function runWizard(langArg?: string): Promise<AgentCorpConfig> {
     applyConfig(cfg);
     console.log(`\n${b('4/4')} ${ok(t('cli.wizard.savedTo', { file }))}`);
     console.log(dim(`  ${t('cli.wizard.private')}`));
-    console.log(`\n  ${acc(t('cli.wizard.next'))}  ${b('npx agentcorp')}\n`);
+    console.log(`\n  ${acc(t('cli.wizard.next'))}  ${b('npx github:bitovvnew/agentcorp')}\n`);
     return cfg;
   } finally {
     p.close();

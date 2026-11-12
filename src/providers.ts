@@ -42,8 +42,8 @@ export function envKey(p: ProviderId): string | undefined {
   return process.env[info.env] || undefined;
 }
 
-export function ollamaBase(): string {
-  return (process.env.OLLAMA_BASE_URL || 'http://localhost:11434').replace(/\/v1\/?$/, '').replace(/\/$/, '');
+export function ollamaBase(base?: string): string {
+  return (base || process.env.OLLAMA_BASE_URL || 'http://localhost:11434').replace(/\/v1\/?$/, '').replace(/\/$/, '');
 }
 
 /** Which providers already have credentials in the environment (values are never returned). */
@@ -115,7 +115,7 @@ export async function probe(p: ProviderId, key?: string, baseURL?: string): Prom
         return { ok: true, models };
       }
       case 'ollama': {
-        const base = (baseURL || ollamaBase()).replace(/\/v1\/?$/, '').replace(/\/$/, '');
+        const base = ollamaBase(baseURL);
         const j = (await getJson(`${base}/api/tags`, {}, 2_500)) as { models?: { name: string }[] };
         return { ok: true, models: sortModels((j.models ?? []).map((m) => ({ id: m.name, label: m.name }))) };
       }

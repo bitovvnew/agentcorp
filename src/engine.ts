@@ -16,7 +16,7 @@ import type {
 } from './types.js';
 import { HIREABLE_ROLES, FOCUSES, SEGMENTS as SEGMENT_LIST } from './types.js';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.1.1';
 
 export type ShockKind = 'funding-freeze' | 'mania' | 'recession' | 'viral' | 'outage' | 'poach';
 export const SHOCKS: { id: ShockKind; label: string }[] = [

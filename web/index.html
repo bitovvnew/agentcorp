@@ -3,120 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AgentCorp — AI Startup League</title>
-<meta name="description" content="A company of AI agents with payroll, runway, layoffs, pivots and funding rounds.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231a1a19'/%3E%3Cpath d='M9 23V12l7-4 7 4v11' fill='none' stroke='%233987e5' stroke-width='2.4' stroke-linejoin='round'/%3E%3Cpath d='M13 23v-6h6v6' fill='none' stroke='%23f0efec' stroke-width='2.4' stroke-linejoin='round'/%3E%3C/svg%3E">
+<meta name="color-scheme" content="dark">
+<title>AgentCorp</title>
+<meta name="description" content="AI startup simulator: LLM CEOs run companies with payroll, runway, layoffs, pivots and funding rounds.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230d0d0c'/%3E%3Ctext x='16' y='24' font-family='Georgia,serif' font-size='22' font-weight='700' text-anchor='middle' fill='%23ede9df'%3EA%3C/text%3E%3Crect x='6' y='27' width='20' height='2' fill='%23ede9df'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<header class="topbar">
-  <div class="brand">
-    <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--surface-2)"/><path d="M9 23V12l7-4 7 4v11" fill="none" stroke="var(--series-1)" stroke-width="2.4" stroke-linejoin="round"/><path d="M13 23v-6h6v6" fill="none" stroke="var(--text-1)" stroke-width="2.4" stroke-linejoin="round"/></svg>
-    <div>
-      <div class="brand-name">AgentCorp</div>
-      <div class="brand-sub" id="subtitle">AI startup league</div>
-    </div>
-  </div>
-  <div class="week-block">
-    <div class="week-label"><span id="week-now">Week 0</span><span class="muted" id="week-total"></span></div>
-    <input type="range" id="scrubber" min="0" max="0" value="0" aria-label="Week">
-  </div>
-  <div class="controls">
-    <button class="btn" id="btn-play" title="Play / pause (space)">⏸ Pause</button>
-    <select class="btn" id="speed" aria-label="Speed">
-      <option value="1">1×</option><option value="2" selected>2×</option><option value="5">5×</option><option value="10">10×</option><option value="0">Max</option>
-    </select>
-    <button class="btn" id="btn-live" title="Jump to the latest week">● Live</button>
-    <select class="btn" id="shock" aria-label="Inject a shock"><option value="">⚡ Shock…</option></select>
-    <button class="btn" id="btn-download" title="Download replay JSON">⤓ Replay</button>
-    <label class="btn file-btn" title="Open a replay JSON">⤒ Open<input type="file" id="file" accept=".json,application/json"></label>
-  </div>
-</header>
-
-<div class="ticker" id="ticker"><span class="ticker-tag">MARKET</span><span id="ticker-text">Connecting…</span><span class="climate" id="climate"></span></div>
-
-<main class="wrap">
-  <div class="banner" id="banner" hidden></div>
-
-  <section class="grid league-grid">
-    <div class="panel">
-      <div class="panel-head"><h2>League table</h2><span class="muted small" id="league-note">Score = valuation. Dead companies score zero.</span></div>
-      <div class="table-scroll"><table class="league" id="league"></table></div>
-    </div>
-    <div class="panel">
-      <div class="panel-head"><h2>Valuation race</h2><span class="muted small">log scale · ◈1B = unicorn</span></div>
-      <div class="chart" id="chart-league"></div>
-      <div class="legend" id="legend-league"></div>
-    </div>
-  </section>
-
-  <nav class="tabs" id="tabs" aria-label="Companies"></nav>
-
-  <section class="company-head panel" id="company-head"></section>
-
-  <section class="kpis" id="kpis"></section>
-
-  <section class="grid two">
-    <div class="panel">
-      <div class="panel-head"><h2>Cash &amp; funding</h2><span class="muted small">bank balance, rounds marked</span></div>
-      <div class="chart" id="chart-cash"></div>
-    </div>
-    <div class="panel">
-      <div class="panel-head"><h2>Weekly P&amp;L</h2><div class="legend inline" id="legend-pnl"></div></div>
-      <div class="chart" id="chart-pnl"></div>
-    </div>
-  </section>
-
-  <section class="grid two">
-    <div class="panel">
-      <div class="panel-head"><h2>Customers won vs. lost</h2><div class="legend inline" id="legend-cust"></div></div>
-      <div class="chart" id="chart-cust"></div>
-    </div>
-    <div class="panel">
-      <div class="panel-head"><h2>Where the money goes</h2><span class="muted small" id="spend-note">this week</span></div>
-      <div id="spend"></div>
-      <div class="panel-head sub"><h2>Cap table</h2><span class="muted small" id="cap-note"></span></div>
-      <div id="captable"></div>
-    </div>
-  </section>
-
-  <section class="grid org-chat">
-    <div class="panel">
-      <div class="panel-head"><h2>Org chart</h2><span class="muted small" id="org-note"></span></div>
-      <div id="org"></div>
-    </div>
-    <div class="panel chat-panel">
-      <div class="panel-head"><h2>Company Slack</h2><span class="muted small" id="chat-note"></span></div>
-      <div class="chat">
-        <ul class="channels" id="channels"></ul>
-        <ol class="messages" id="messages" aria-live="polite"></ol>
-      </div>
-    </div>
-  </section>
-
-  <section class="panel">
-    <div class="panel-head"><h2>Decision timeline</h2><span class="muted small">hover a dot for details</span></div>
-    <div class="chart" id="timeline"></div>
-  </section>
-
-  <section class="grid two">
-    <div class="panel">
-      <div class="panel-head"><h2>Task marketplace</h2><span class="muted small">bounties posted by the CEO, won by the best bid</span></div>
-      <ol class="bounties" id="bounties"></ol>
-    </div>
-    <div class="panel">
-      <div class="panel-head"><h2>Top earners</h2><span class="muted small">bounty income, all time</span></div>
-      <div id="earners"></div>
-    </div>
-  </section>
-
-  <footer class="foot">
-    <span>AgentCorp · open-source AI startup simulator · money is tokens (◈) · all companies, people and investors are fictional</span>
-    <a href="https://github.com/bitovvnew/agentcorp" target="_blank" rel="noopener">GitHub</a>
-  </footer>
-</main>
-
+<div id="app"><div class="boot">AgentCorp</div></div>
+<div class="moments" id="moments" aria-live="polite"></div>
 <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+<div class="modal" id="modal" hidden><div class="modal-card" role="dialog" aria-modal="true"></div></div>
 <script type="module" src="app.js"></script>
 </body>
 </html>

@@ -21,6 +21,7 @@ describe('createBrain', () => {
   });
 
   it('rejects unknown specs with a helpful message', () => {
+    vi.stubEnv('AGENTCORP_OPENAI_MODEL', '');
     expect(() => createBrain('skynet')).toThrow(/Unknown brain/);
     expect(() => createBrain('heuristic:chaotic')).toThrow(/personality/);
     expect(() => createBrain('openai')).toThrow(/name a model/);
@@ -34,13 +35,17 @@ describe('createBrain', () => {
     vi.stubEnv('ANTHROPIC_AUTH_TOKEN', '');
     expect(() => createBrain('openai:some-model')).toThrow(/OPENAI_API_KEY/);
     expect(() => createBrain('gemini:some-model')).toThrow(/GEMINI_API_KEY/);
-    expect(() => createBrain('anthropic')).toThrow(/ANTHROPIC_API_KEY/);
+    expect(() => createBrain('anthropic:some-model')).toThrow(/ANTHROPIC_API_KEY/);
   });
 
-  it('uses defaults for Anthropic and Ollama', () => {
+  it('accepts configured model IDs without hard-coding provider catalogs', () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'test');
-    expect(createBrain('anthropic').label).toBe('claude-opus-5-5');
-    expect(createBrain('ollama').label).toBe('llama3.2');
+    vi.stubEnv('AGENTCORP_ANTHROPIC_MODEL', 'configured-claude');
+    vi.stubEnv('AGENTCORP_OLLAMA_MODEL', '');
+    expect(createBrain('anthropic').label).toBe('configured-claude');
+    expect(createBrain('anthropic:explicit-claude').label).toBe('explicit-claude');
+    expect(createBrain('ollama:installed-model').label).toBe('installed-model');
+    expect(() => createBrain('ollama')).toThrow(/agentcorp models ollama/);
   });
 });
 

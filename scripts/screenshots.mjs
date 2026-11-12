@@ -33,7 +33,7 @@ const url = pathToFileURL(html).href;
 function shot(hash, file, w, h) {
   execFileSync(BROWSER, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--force-device-scale-factor=1',
     `--window-size=${w},${h}`, '--virtual-time-budget=4000', `--user-data-dir=${path.join(TMP, 'profile')}`,
-    `--screenshot=${path.join(OUT, file)}`, `${url}#${hash}`], { stdio: 'ignore' });
+    `--screenshot=${path.join(OUT, file)}`, `${url}#${hash}&lang=en&static=1`], { stdio: 'ignore' });
   console.log('  ✓', file);
 }
 
@@ -41,5 +41,5 @@ const top = sim.league()[0].id;
 const second = sim.league()[1].id;
 shot(`week=end&company=${top}`, 'dashboard.png', 1440, 1500);
 shot(`week=52&company=${second}`, 'midseason.png', 1440, 1500);
-shot(`week=end&company=${second}`, 'mobile.png', 390, 1400);
+shot(`week=end&company=${second}`, 'mobile.png', 500, 1400);
 console.log(`Screenshots in ${path.relative(ROOT, OUT)}; demo replay in examples/demo-replay.json`);

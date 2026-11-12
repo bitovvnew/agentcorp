@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1 — 2026-11-12
+
+- A redesigned dashboard with a replay scrubber, market wire, quarterly board decks, investor pitches and downloadable season recaps.
+- Browser and terminal setup with live key checks, provider model discovery and detection of models installed in Ollama.
+- Multi-race championships with scenario and seed sweeps, a points table and a standalone HTML report.
+- English, Russian, Kazakh and French dashboard and setup translations, with message and placeholder coverage checked in CI.
+- OpenRouter support, local league configuration, token usage thresholds and credential redaction for provider errors.
+- Keyless demo on the default first launch, with smoke tests for replay, pitch and championship export.
+
 ## 0.1.0 — 2026-11-12
 
 First public release.

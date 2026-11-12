@@ -34,7 +34,7 @@ const HELP = `
 ${c.bold('AgentCorp')} ${c.dim(`v${VERSION}`)} — AI startup simulator. Which LLM runs the best company?
 
 ${c.bold('Usage')}
-  agentcorp                              First run: setup wizard in your browser. After that: your league, live
+  agentcorp                              Run your saved league or the keyless demo
   agentcorp setup [--web]                Pick providers, paste keys (checked live), pick models, save locally
   agentcorp models <provider>            List the models a provider offers you (openai, anthropic, gemini, openrouter, ollama)
   agentcorp league --brains <a,b,c,…>    Companies with different CEO brains compete in one market
@@ -57,7 +57,7 @@ ${c.bold('Options')}
   --max-tokens-total <n>  Spend cap for the whole league (default: 2000000)
   --token-charge <x>    Charge companies x ◈ per real LLM token their CEO spends (default: 0)
   --plugin <file.js>    Load a template or scenario plugin (repeatable)
-  --lang <code>         en, ru, kk, fr, zh, ko, es, ja (default: auto)
+  --lang <code>         en, ru, kk, fr (default: auto)
   --headless            Run in the terminal, no dashboard
   --out <file>          Save the replay (JSON), export (HTML) or pitch (MD) here
   --speed <n>           Weeks per second in the live dashboard (default: 2, 0 = max)
@@ -69,7 +69,7 @@ ${c.bold('Brains')}
   balanced | blitzscaler | bootstrapper | visionary      offline strategy CEOs, no key, not LLMs
 
 ${c.bold('Examples')}
-  npx agentcorp
+  npx github:bitovvnew/agentcorp
   agentcorp models openai
   agentcorp league --brains anthropic:<model>,openai:<model>,ollama:<model> --scenario ai-winter
   agentcorp season --brains blitzscaler,bootstrapper,visionary --runs 5 --scenarios baseline,recession --headless
@@ -183,15 +183,11 @@ function leagueToConfig(l: LeagueSetup, args: Args): SimConfig {
   };
 }
 
-/** Default command: onboarding on first run, the saved league afterwards. */
+/** Run the saved league when available, or the keyless demo on first run. */
 async function startCmd(args: Args): Promise<number> {
+  if (args.setup) return webSetup(args);
   const cfg = loadConfig();
-  if (cfg?.league && !args.setup) return liveRun(leagueToConfig(cfg.league, args), args);
-  if (args.headless || !process.stdout.isTTY && process.env.CI) {
-    console.log('No league configured yet. Run "agentcorp setup", or "agentcorp offline" for the no-key strategies.');
-    return 1;
-  }
-  return webSetup(args);
+  return cfg?.league ? liveRun(leagueToConfig(cfg.league, args), args) : runCmd('offline', args);
 }
 
 async function setupCmd(args: Args): Promise<number> {
@@ -205,13 +201,14 @@ async function webSetup(args: Args): Promise<number> {
   const server = await serve({
     port: Math.floor(num(args, 'port', 4747)),
     speed: num(args, 'speed', 2),
+    paused: !!args.paused,
     startLeague: (league) => {
       const config = leagueToConfig(league, args);
       return createSimulation(config, config.companies.map((x) => createBrain(x.brain, { decideEvery: config.decideEvery })));
     },
   });
   console.log(`\n  ${c.bold('AgentCorp')} ${c.dim(`v${VERSION}`)} — setup\n\n  Open  ${c.cyan(server.url)}\n`);
-  console.log(c.dim('  Keys are saved to ./.agentcorp/config.json (git-ignored, never logged). Ctrl+C to stop.\n'));
+  console.log(c.dim('  Keys are saved to your local, git-ignored configuration. Ctrl+C to stop.\n'));
   if (args.open !== false && !process.env.CI) openBrowser(server.url);
   await new Promise(() => {});
   return 0;
@@ -264,14 +261,18 @@ async function pitchCmd(args: Args): Promise<number> {
   const story = (await import(pathToFileURL(path.join(WEB_DIR, 'lib', 'story.js')).href)) as {
     buildPitch: (r: Replay, id: string, idx: number, t: (k: string, p?: Record<string, unknown>) => string) => { title: string; slides: { title: string; lines: string[] }[] };
     pitchMarkdown: (deck: { title: string; slides: { title: string; lines: string[] }[] }) => string;
-    makeT: (dict: Record<string, string>, en: Record<string, string>, lang: string) => (k: string, p?: Record<string, unknown>) => string;
   };
   const lang = detectLang(str(args, 'lang') ?? loadConfig()?.lang);
-  const read = (l: string) => JSON.parse(fs.readFileSync(path.join(WEB_DIR, 'locales', `${l}.json`), 'utf8'));
-  const t = story.makeT(read(lang), read('en'), lang);
+  const i18n = (await import(pathToFileURL(path.join(WEB_DIR, 'lib', 'i18n.js')).href)) as {
+    makeT: (dict: Record<string, string>, en: Record<string, string>, lang: string) => (k: string, p?: Record<string, unknown>) => string;
+  };
+  const read = (l: string) => JSON.parse(fs.readFileSync(path.join(WEB_DIR, 'locales', `${l}.json`), 'utf8')) as Record<string, string>;
+  const t = i18n.makeT(read(lang), read('en'), lang);
   const id = str(args, 'company') ?? replay.league?.[0]?.id ?? replay.companies[0].id;
   const week = args.week ? Math.floor(num(args, 'week', 0)) : replay.frames[replay.frames.length - 1].week;
-  const idx = Math.max(0, replay.frames.findIndex((f) => f.week === week));
+  const idx = replay.frames.findIndex((f) => f.week === week);
+  if (!replay.companies.some((company) => company.id === id)) throw new Error(`Unknown company: ${id}`);
+  if (idx < 0) throw new Error(`Week ${week} is unavailable in this replay`);
   const md = story.pitchMarkdown(story.buildPitch(replay, id, idx, t));
   const out = str(args, 'out');
   if (out) { fs.writeFileSync(out, md); console.log(`Wrote ${out}`); } else console.log(md);

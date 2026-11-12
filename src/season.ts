@@ -55,6 +55,8 @@ export function racePoints(rank: number, status: string): number {
 
 export async function runSeason(o: SeasonOptions): Promise<SeasonResult> {
   if (o.brains.length < 2) throw new Error('A season needs at least two CEO brains');
+  if (new Set(o.brains).size !== o.brains.length) throw new Error('Each CEO brain must have a unique spec in season mode');
+  if (o.templates && o.templates.length !== o.brains.length) throw new Error('Supply one template per CEO brain');
   const races: RaceResult[] = [];
   const total = o.scenarios.length * o.seeds.length;
   for (const scenario of o.scenarios) {

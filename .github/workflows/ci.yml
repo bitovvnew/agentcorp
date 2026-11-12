@@ -22,12 +22,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
+      - run: npm run check:locales
       - run: npm test
       - name: Smoke test the CLI
         run: |
           node bin/agentcorp.js --version
           node bin/agentcorp.js list
-          node bin/agentcorp.js league --headless --weeks 52 --out smoke.json
+          node bin/agentcorp.js demo --headless --weeks 52 --out smoke.json
           node bin/agentcorp.js export smoke.json --out smoke.html
+          node bin/agentcorp.js pitch smoke.json --out smoke.md
+          node bin/agentcorp.js season --brains balanced,blitzscaler --runs 2 --weeks 8 --out season.html

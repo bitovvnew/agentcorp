@@ -7,13 +7,13 @@
 Which model runs the best startup: GPT, Claude, Gemini or Llama? Put them in one market and find out.
 
 [![CI](https://github.com/bitovvnew/agentcorp/actions/workflows/ci.yml/badge.svg)](https://github.com/bitovvnew/agentcorp/actions/workflows/ci.yml)
-![version](https://img.shields.io/badge/version-0.1.0-3987e5)
+![version](https://img.shields.io/badge/version-0.1.1-3987e5)
 ![node](https://img.shields.io/badge/node-%E2%89%A520-199e70)
 ![license](https://img.shields.io/badge/license-MIT-c98500)
 ![runs keyless](https://img.shields.io/badge/demo-no%20API%20key-d95926)
 
 ```bash
-npx github:bitovvnew/agentcorp
+npx --yes github:bitovvnew/agentcorp#v0.1.1 demo
 ```
 
 <img src="docs/img/dashboard.png" alt="AgentCorp dashboard: league table, valuation race on a log scale, company KPIs, cash and funding chart, weekly P&L" width="100%">
@@ -47,23 +47,30 @@ The result reads like a startup drama, and it doubles as a **benchmark for long-
 No API key needed. Four built-in CEO personalities compete in the demo league:
 
 ```bash
-npx github:bitovvnew/agentcorp          # opens the live dashboard at http://localhost:4747
+npx --yes github:bitovvnew/agentcorp#v0.1.1 demo
 ```
 
-Or clone it:
+The command opens the live dashboard at http://127.0.0.1:4747. To run from a checkout:
 
 ```bash
 git clone https://github.com/bitovvnew/agentcorp && cd agentcorp
-npm install
+npm ci
 npm start
 ```
 
 ### Put real models in charge
 
-```bash
-export ANTHROPIC_API_KEY=...   OPENAI_API_KEY=...   GEMINI_API_KEY=...
+Open the browser setup to discover installed Ollama models, validate credentials and choose the CEOs for your league. For terminal setup, drop `--web`.
 
-agentcorp league --brains anthropic,openai:<model>,gemini:<model>,ollama:llama3.2
+```bash
+npx --yes github:bitovvnew/agentcorp#v0.1.1 setup --web
+```
+
+If you already set up keys in the environment, list the available models and use their IDs in `--brains`:
+
+```bash
+agentcorp models anthropic
+agentcorp league --brains anthropic:CLAUDE_ID,openai:OPENAI_ID,gemini:GEMINI_ID,ollama:LOCAL_ID
 ```
 
 Each company gets its own CEO model. They all compete in the same market with the same seed, so the only difference is the decisions.
@@ -71,13 +78,14 @@ Each company gets its own CEO model. They all compete in the same market with th
 | Brain spec | What it is | Needs |
 |---|---|---|
 | `balanced` `blitzscaler` `bootstrapper` `visionary` | Built-in strategies (deterministic) | nothing |
-| `anthropic[:model]` | Claude via the official SDK, defaults to `claude-opus-5-5` | `ANTHROPIC_API_KEY` |
+| `anthropic:<model>` | Claude via the official SDK | `ANTHROPIC_API_KEY` |
 | `openai:<model>` | OpenAI Chat Completions | `OPENAI_API_KEY` |
 | `gemini:<model>` | Google Gemini API | `GEMINI_API_KEY` |
-| `ollama[:model]` | Local models through Ollama, defaults to `llama3.2` | Ollama running |
-| `openai-compatible:<model>` | OpenRouter, vLLM, LM Studio… | `AGENTCORP_BASE_URL`, `AGENTCORP_API_KEY` |
+| `ollama:<model>` | Local models through Ollama | Ollama running with an installed model |
+| `openrouter:<model>` | OpenRouter catalog | `OPENROUTER_API_KEY` |
+| `openai-compatible:<model>` | vLLM, LM Studio and other compatible servers | `AGENTCORP_BASE_URL`, `AGENTCORP_API_KEY` |
 
-LLM CEOs decide every 4 weeks by default (`--decide-every`), so a 104-week season costs 26 calls per company. Add `--token-charge 1` to make every real token the model spends cost the company ◈1. Thinking is no longer free.
+LLM CEOs decide every 4 weeks by default (`--decide-every`). A surviving company in a 104-week season has 26 scheduled model decisions, plus any retries. Set `--max-tokens-agent` and `--max-tokens-total` to switch to autopilot after reported usage reaches those thresholds. In-flight decisions and retries can take usage past a threshold. Add `--token-charge 1` to charge the company ◈1 per reported token.
 
 LLMs make mistakes, so every decision passes through a sanitizer (`sanitize()` in `src/engine.ts`). Unknown roles, invented employee IDs, absurd prices and firing yourself are all clamped or dropped. If a model times out or replies with no JSON, an autopilot covers that week and the incident is logged in the company Slack.
 
@@ -92,17 +100,24 @@ LLMs make mistakes, so every decision passes through a sanitizer (`sanitize()` i
 - **Decision timeline**: funding, people, product, board and milestones on one week axis.
 - **Shocks**: inject a funding freeze, VC mania, a recession, a viral moment, an outage or a poached engineer while it runs.
 - **Replays**: scrub through any week, download the replay, open it later or export it as one HTML file.
+- **Boardroom and stories**: open quarterly board decks, create an investor pitch, and share a season recap.
+- **Languages**: English, Russian, Kazakh and French for dashboard labels and built-in event templates. Live model memos retain their original wording.
 
-<img src="docs/img/midseason.png" alt="Mid-season view of a company: KPIs, org chart, Slack-style feed" width="100%">
+<img src="docs/img/midseason.png" alt="Mid-season company view with valuation, runway, weekly financial results and operating metrics" width="100%">
 
 ## Commands
 
 ```text
-agentcorp [demo]                       Keyless demo league, live in your browser
+agentcorp                              Saved league or the keyless demo
+agentcorp demo                         Keyless demo league, live in your browser
+agentcorp setup [--web]                Configure providers, models and a league
+agentcorp models <provider>            List models available to your account or Ollama
 agentcorp league --brains <a,b,c,…>    Companies with different CEO brains compete in one market
+agentcorp season --brains <a,b,…>      Multi-race championship across seeds and scenarios
 agentcorp run --brain <spec>           A single company
 agentcorp replay <file.json>           Open a saved replay in the dashboard
 agentcorp export <file.json> [--out f] Turn a replay into one shareable HTML file
+agentcorp pitch <file.json> [--out f]  Generate an investor pitch from a replay
 agentcorp list                         Templates, scenarios and brains
 
 --template saas|enterprise|consumer|devtools|ai-wrapper    --templates a,b,c (one per company)
@@ -116,6 +131,8 @@ Headless mode prints the headlines and a final league table, which suits CI or b
 ```bash
 agentcorp league --brains blitzscaler,bootstrapper,visionary --scenario ai-winter --headless --out winter.json
 agentcorp export winter.json      # → winter.html, send it to anyone
+agentcorp pitch winter.json --lang ru --out pitch.md
+agentcorp season --brains blitzscaler,bootstrapper,visionary --scenarios baseline,ai-winter --runs 3 --out season.html
 ```
 
 ## Scenarios and templates
@@ -170,7 +187,7 @@ import { createSimulation, createBrain } from 'agentcorp';
 const sim = createSimulation({
   seed: 7, weeks: 104, scenario: 'ai-winter',
   companies: [
-    { template: 'saas', brain: 'anthropic' },
+    { template: 'saas', brain: 'balanced' },
     { template: 'saas', brain: 'bootstrapper' },
   ],
 });
@@ -215,7 +232,7 @@ Source map: `src/engine.ts` (the world), `src/economy.ts` (formulas), `src/brain
 
 ## Contributing
 
-PRs welcome, especially new scenarios, templates, brain adapters and dashboard views. See [CONTRIBUTING.md](CONTRIBUTING.md). Run `npm test` before you push.
+PRs welcome, especially new scenarios, templates, brain adapters and dashboard views. See [CONTRIBUTING.md](CONTRIBUTING.md). Run `npm test` and `npm run check:locales` before you push. `npm run screenshots` regenerates the README images from fictional demo data using Chrome or Edge.
 
 ## License
 

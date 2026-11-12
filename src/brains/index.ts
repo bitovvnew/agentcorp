@@ -8,14 +8,11 @@ export { SYSTEM_PROMPT, DECISION_SCHEMA, parseDecision, userPrompt } from './pro
 
 const PROVIDERS: Provider[] = ['openai', 'anthropic', 'gemini', 'ollama', 'openrouter', 'openai-compatible'];
 
-/** No hard-coded model names: models come from each provider's API (`agentcorp models <provider>`). */
-export const DEFAULT_MODELS: Partial<Record<Provider, string>> = {};
-
 /**
  * Brain spec strings:
  *   balanced | blitzscaler | bootstrapper | visionary      built-in heuristic CEOs (no key)
  *   heuristic:<personality>                                 same, explicit
- *   anthropic[:model]  openai:<model>  gemini:<model>  ollama[:model]  openai-compatible:<model>
+ *   anthropic:<model>  openai:<model>  gemini:<model>  ollama:<model>  openai-compatible:<model>
  */
 export function createBrain(spec: string, opts: { decideEvery?: number } = {}): Brain {
   const raw = spec.trim();
@@ -30,7 +27,7 @@ export function createBrain(spec: string, opts: { decideEvery?: number } = {}): 
   }
   if ((PROVIDERS as string[]).includes(key)) {
     const provider = key as Provider;
-    const model = tail || DEFAULT_MODELS[provider] || envModel(provider);
+    const model = tail || envModel(provider);
     if (!model) throw new Error(`Brain "${spec}": name a model, e.g. ${provider}:<model-id>. List them with: agentcorp models ${provider}`);
     return new LlmBrain({ provider, model, decideEvery: opts.decideEvery });
   }

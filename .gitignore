@@ -3,6 +3,7 @@ dist/
 *.log
 .env
 .env.*
+.agentcorp/
 coverage/
 *.tgz
 /agentcorp-replay-*.json

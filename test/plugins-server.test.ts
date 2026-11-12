@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createSimulation, DEMO_LEAGUE, registerPlugin, loadPluginFile, getScenario, getTemplate, listTemplates, listScenarios, validateReplay,
 } from '../src/index.js';
@@ -68,7 +68,7 @@ describe('replays', () => {
 describe('server', () => {
   it('serves the dashboard, the replay and accepts controls', async () => {
     const sim = createSimulation({ ...DEMO_LEAGUE, weeks: 6 });
-    const server = await serve({ sim, port: 47_470, paused: true, speed: 0, quiet: true });
+    const server = await serve({ sim, port: 0, paused: true, speed: 0, quiet: true });
     try {
       const html = await (await fetch(server.url)).text();
       expect(html).toContain('AgentCorp');
@@ -76,15 +76,45 @@ describe('server', () => {
       expect(status).toMatchObject({ mode: 'live', paused: true });
       const replay = await (await fetch(`${server.url}/api/replay`)).json();
       expect(replay.format).toBe('agentcorp-replay');
-      const res = await fetch(`${server.url}/api/control`, { method: 'POST', body: JSON.stringify({ action: 'resume' }) });
+      const headers = { 'x-agentcorp': '1' };
+      const res = await fetch(`${server.url}/api/control`, { method: 'POST', headers, body: JSON.stringify({ action: 'resume' }) });
       expect((await res.json()).paused).toBe(false);
       const done = await server.done;
       expect(done?.finished).toBe(true);
       expect((await fetch(`${server.url}/../package.json`)).status).toBe(404);
-      const bad = await fetch(`${server.url}/api/control`, { method: 'POST', body: JSON.stringify({ action: 'explode' }) });
+      const denied = await fetch(`${server.url}/api/control`, { method: 'POST', body: JSON.stringify({ action: 'pause' }) });
+      expect(denied.status).toBe(403);
+      const bad = await fetch(`${server.url}/api/control`, { method: 'POST', headers, body: JSON.stringify({ action: 'explode' }) });
       expect(bad.status).toBe(400);
     } finally {
       await server.close();
+    }
+  });
+
+  it('saves the browser setup only when a valid league starts', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agentcorp-setup-test-'));
+    vi.stubEnv('AGENTCORP_HOME', home);
+    const server = await serve({ startLeague: createSimulation, port: 0, speed: 0, quiet: true });
+    try {
+      const save = (league: unknown) => fetch(`${server.url}/api/setup/start`, {
+        method: 'POST', headers: { 'x-agentcorp': '1' }, body: JSON.stringify({ league }),
+      });
+      const configPath = path.join(home, 'config.json');
+      expect((await save({ ...DEMO_LEAGUE, companies: [] })).status).toBe(400);
+      expect(fs.existsSync(configPath)).toBe(false);
+      expect((await save({ ...DEMO_LEAGUE, companies: [{ brain: 'invalid', template: 'saas' }] })).status).toBe(400);
+      expect(fs.existsSync(configPath)).toBe(false);
+      const start = await save({ ...DEMO_LEAGUE, weeks: 8 });
+      expect(await start.json()).toMatchObject({ mode: 'live' });
+      expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).league.weeks).toBe(8);
+      expect((await save(DEMO_LEAGUE)).status).toBe(409);
+      expect((await server.done)?.finished).toBe(true);
+    } finally {
+      await server.close();
+      vi.unstubAllEnvs();
+      fs.rmSync(path.join(home, 'config.json'), { force: true });
+      fs.rmSync(path.join(home, '.gitignore'), { force: true });
+      fs.rmdirSync(home);
     }
   });
 });

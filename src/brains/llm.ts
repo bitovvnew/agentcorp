@@ -3,6 +3,7 @@
 import type { Brain, BrainContext, BrainResult, BrainUsage, Decision, Observation } from '../types.js';
 import { DECISION_SCHEMA, SYSTEM_PROMPT, parseDecision, userPrompt } from './prompt.js';
 import { limiterFor, redact, registerSecret } from '../security.js';
+import { ollamaBase } from '../providers.js';
 
 export type Provider = 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'openrouter' | 'openai-compatible';
 
@@ -67,7 +68,7 @@ function makeCall(o: LlmOptions): Call {
   switch (o.provider) {
     case 'anthropic': return anthropicCall(o);
     case 'gemini': return geminiCall(o);
-    case 'ollama': return openAiCompatibleCall({ ...o, baseURL: o.baseURL ?? process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434/v1', apiKey: o.apiKey ?? 'ollama' });
+    case 'ollama': return openAiCompatibleCall({ ...o, baseURL: `${ollamaBase(o.baseURL)}/v1`, apiKey: o.apiKey ?? 'ollama' });
     case 'openrouter': return openAiCompatibleCall({ ...o, baseURL: o.baseURL ?? 'https://openrouter.ai/api/v1', apiKey: o.apiKey ?? process.env.OPENROUTER_API_KEY });
     case 'openai': return openAiCompatibleCall({ ...o, baseURL: o.baseURL ?? process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1', apiKey: o.apiKey ?? process.env.OPENAI_API_KEY });
     case 'openai-compatible': return openAiCompatibleCall({ ...o, baseURL: o.baseURL ?? process.env.AGENTCORP_BASE_URL, apiKey: o.apiKey ?? process.env.AGENTCORP_API_KEY });
