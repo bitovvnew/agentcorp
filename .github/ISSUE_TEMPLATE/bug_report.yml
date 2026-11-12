@@ -1,0 +1,19 @@
+name: Bug report
+description: Something broke or the economy did something absurd
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Include the command you ran. For simulation bugs, the seed, scenario and brains reproduce the run exactly.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+  - type: input
+    id: version
+    attributes:
+      label: AgentCorp version / Node version / OS

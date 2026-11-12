@@ -1,0 +1,72 @@
+{
+  "name": "agentcorp",
+  "version": "0.1.0",
+  "description": "AI Startup Simulator — a company of AI agents with payroll, runway, layoffs, pivots and funding rounds. Pit GPT, Claude, Gemini and Llama against each other in a startup league. Runs keyless in demo mode.",
+  "type": "module",
+  "bin": {
+    "agentcorp": "bin/agentcorp.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "bin",
+    "dist",
+    "web",
+    "examples",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
+    "start": "npm run build && node bin/agentcorp.js",
+    "demo": "node bin/agentcorp.js demo",
+    "league": "node bin/agentcorp.js league --headless",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "screenshots": "npm run build && node scripts/screenshots.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/sdk": "^0.70.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "keywords": [
+    "ai-agents",
+    "multi-agent",
+    "llm",
+    "simulation",
+    "startup",
+    "economy",
+    "agent-economy",
+    "benchmark",
+    "openai",
+    "anthropic",
+    "claude",
+    "gemini",
+    "ollama",
+    "dashboard",
+    "game"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bitovvnew/agentcorp.git"
+  },
+  "homepage": "https://github.com/bitovvnew/agentcorp#readme",
+  "bugs": "https://github.com/bitovvnew/agentcorp/issues",
+  "license": "MIT"
+}

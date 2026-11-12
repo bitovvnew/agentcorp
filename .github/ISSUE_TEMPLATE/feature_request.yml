@@ -1,0 +1,14 @@
+name: Feature or idea
+description: A new scenario, template, brain adapter, dashboard view, or economic mechanic
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it makes the simulation better
