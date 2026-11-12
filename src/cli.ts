@@ -9,7 +9,15 @@ import { createBrain, listBrains } from './brains/index.js';
 import { listScenarios, listTemplates, loadPluginFile } from './plugins/index.js';
 import { readReplay, writeReplay } from './replay.js';
 import { exportHtml, serve } from './server.js';
-import type { LeagueRow, SimConfig } from './types.js';
+import type { LeagueRow, Replay, SimConfig } from './types.js';
+import { pathToFileURL } from 'node:url';
+import { WEB_DIR } from './server.js';
+import { applyConfig, loadConfig, loadDotEnv, type LeagueSetup } from './config.js';
+import { PROVIDERS, probe, type ProviderId } from './providers.js';
+import { runWizard } from './wizard.js';
+import { runSeason } from './season.js';
+import { seasonHtml } from './season-html.js';
+import { detectLang } from './i18n.js';
 
 const tty = process.stdout.isTTY && !process.env.NO_COLOR;
 const c = {
@@ -26,39 +34,45 @@ const HELP = `
 ${c.bold('AgentCorp')} ${c.dim(`v${VERSION}`)} — AI startup simulator. Which LLM runs the best company?
 
 ${c.bold('Usage')}
-  agentcorp [demo]                       Keyless demo league, live in your browser
+  agentcorp                              First run: setup wizard in your browser. After that: your league, live
+  agentcorp setup [--web]                Pick providers, paste keys (checked live), pick models, save locally
+  agentcorp models <provider>            List the models a provider offers you (openai, anthropic, gemini, openrouter, ollama)
   agentcorp league --brains <a,b,c,…>    Companies with different CEO brains compete in one market
+  agentcorp season --brains <a,b,…>      Several races across seeds and scenarios; points decide the champion
+  agentcorp offline                      No keys: the four built-in strategy CEOs (labelled "Offline")
   agentcorp run --brain <spec>           A single company
   agentcorp replay <file.json>           Open a saved replay in the dashboard
   agentcorp export <file.json> [--out f] Turn a replay into one shareable HTML file
+  agentcorp pitch <file.json> [--company id] [--week n]   Investor pitch deck (Markdown) from a run
   agentcorp list                         Templates, scenarios and brains
 
 ${c.bold('Options')}
-  --template <id>       Company template for every company (default: saas)
-  --templates <a,b,…>   One template per company
+  --template <id> | --templates <a,b,…>   Company template(s) (default: saas)
   --names <a,b,…>       Company names
-  --scenario <id>       Market scenario (default: baseline)
+  --scenario <id>       Market scenario (default: baseline). Season: --scenarios a,b
   --weeks <n>           Season length in weeks (default: 104)
-  --seed <n>            Random seed — same seed, same world (default: 42)
+  --seed <n>            Random seed: same seed, same world (default: 42). Season: --runs n
   --decide-every <n>    LLM CEOs decide every n weeks (default: 4)
+  --max-tokens-agent <n>  Spend cap per LLM CEO in tokens (default: 400000), then autopilot
+  --max-tokens-total <n>  Spend cap for the whole league (default: 2000000)
   --token-charge <x>    Charge companies x ◈ per real LLM token their CEO spends (default: 0)
   --plugin <file.js>    Load a template or scenario plugin (repeatable)
+  --lang <code>         en, ru, kk, fr, zh, ko, es, ja (default: auto)
   --headless            Run in the terminal, no dashboard
-  --out <file>          Save the replay (JSON) or export (HTML) here
+  --out <file>          Save the replay (JSON), export (HTML) or pitch (MD) here
   --speed <n>           Weeks per second in the live dashboard (default: 2, 0 = max)
   --port <n>            Dashboard port (default: 4747)
-  --paused              Start the dashboard paused
-  --no-open             Do not open a browser
+  --paused | --no-open
 
 ${c.bold('Brains')}
-  balanced | blitzscaler | bootstrapper | visionary      built-in CEOs, no API key
-  anthropic[:model]  openai:<model>  gemini:<model>  ollama[:model]  openai-compatible:<model>
+  openai:<model>  anthropic:<model>  gemini:<model>  openrouter:<model>  ollama:<model>  openai-compatible:<model>
+  balanced | blitzscaler | bootstrapper | visionary      offline strategy CEOs, no key, not LLMs
 
 ${c.bold('Examples')}
   npx agentcorp
-  agentcorp league --brains anthropic,openai:<model>,gemini:<model>,ollama:llama3.2
-  agentcorp league --brains blitzscaler,bootstrapper --scenario ai-winter --headless --out run.json
-  agentcorp run --brain visionary --template devtools --weeks 52
+  agentcorp models openai
+  agentcorp league --brains anthropic:<model>,openai:<model>,ollama:<model> --scenario ai-winter
+  agentcorp season --brains blitzscaler,bootstrapper,visionary --runs 5 --scenarios baseline,recession --headless
 `;
 
 interface Args {
@@ -106,45 +120,169 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   const args = parseArgs(argv);
   if (args.version) { console.log(VERSION); return 0; }
   if (args.help) { console.log(HELP); return 0; }
+  loadDotEnv();
+  const cfg = loadConfig();
+  applyConfig(cfg);
   for (const p of args.plugin as string[]) await loadPluginFile(p);
-  const cmd = args._[0] ?? 'demo';
+  const cmd = args._[0] ?? 'start';
 
   switch (cmd) {
     case 'help': console.log(HELP); return 0;
     case 'list': printList(); return 0;
+    case 'setup': return setupCmd(args);
+    case 'models': return modelsCmd(args);
     case 'replay': return replayCmd(args);
     case 'export': return exportCmd(args);
+    case 'pitch': return pitchCmd(args);
+    case 'season': return seasonCmd(args);
+    case 'start': return startCmd(args);
     case 'demo':
+    case 'offline':
     case 'league':
-    case 'run': return runCmd(cmd, args);
+    case 'run': return runCmd(cmd === 'demo' ? 'offline' : cmd, args);
     default:
       console.error(c.red(`Unknown command "${cmd}".`) + ' Try agentcorp --help');
       return 1;
   }
 }
 
+function budgetOf(args: Args): SimConfig['budget'] {
+  return { perAgentTokens: Math.floor(num(args, 'max-tokens-agent', 400_000)), totalTokens: Math.floor(num(args, 'max-tokens-total', 2_000_000)) };
+}
+
 function buildConfig(cmd: string, args: Args): SimConfig {
   const base = DEMO_LEAGUE;
   let brains: string[];
   if (cmd === 'run') brains = [str(args, 'brain', 'balanced')!];
-  else brains = list(args, 'brains') ?? list(args, 'brain') ?? base.companies.map((x) => x.brain);
+  else if (cmd === 'offline') brains = base.companies.map((x) => x.brain);
+  else {
+    const given = list(args, 'brains') ?? list(args, 'brain');
+    if (!given) throw new Error('Name the CEOs: --brains openai:<model>,anthropic:<model>,… (or run "agentcorp setup", or "agentcorp offline")');
+    brains = given;
+  }
   const templates = list(args, 'templates');
   const template = str(args, 'template');
   const names = list(args, 'names') ?? [];
   if (templates && templates.length !== brains.length) throw new Error(`--templates needs ${brains.length} entries (one per brain)`);
   return {
-    title: cmd === 'run' ? 'Single company' : cmd === 'demo' ? 'Demo league' : 'League',
+    title: cmd === 'run' ? 'Single company' : cmd === 'offline' ? 'Offline league' : 'League',
     seed: Math.floor(num(args, 'seed', base.seed)),
     weeks: Math.floor(num(args, 'weeks', base.weeks)),
     scenario: str(args, 'scenario', base.scenario)!,
     decideEvery: Math.floor(num(args, 'decide-every', 4)),
     tokenCharge: num(args, 'token-charge', 0),
+    budget: budgetOf(args),
     companies: brains.map((brain, i) => ({ brain, template: templates?.[i] ?? template ?? 'saas', name: names[i] })),
   };
 }
 
+function leagueToConfig(l: LeagueSetup, args: Args): SimConfig {
+  return {
+    title: 'League', seed: l.seed, weeks: l.weeks, scenario: l.scenario, decideEvery: l.decideEvery ?? 4,
+    tokenCharge: num(args, 'token-charge', 0), budget: budgetOf(args), companies: l.companies,
+  };
+}
+
+/** Default command: onboarding on first run, the saved league afterwards. */
+async function startCmd(args: Args): Promise<number> {
+  const cfg = loadConfig();
+  if (cfg?.league && !args.setup) return liveRun(leagueToConfig(cfg.league, args), args);
+  if (args.headless || !process.stdout.isTTY && process.env.CI) {
+    console.log('No league configured yet. Run "agentcorp setup", or "agentcorp offline" for the no-key strategies.');
+    return 1;
+  }
+  return webSetup(args);
+}
+
+async function setupCmd(args: Args): Promise<number> {
+  if (args.web) return webSetup(args);
+  if (!process.stdin.isTTY) { console.error('setup needs an interactive terminal; try "agentcorp setup --web"'); return 1; }
+  await runWizard(str(args, 'lang'));
+  return 0;
+}
+
+async function webSetup(args: Args): Promise<number> {
+  const server = await serve({
+    port: Math.floor(num(args, 'port', 4747)),
+    speed: num(args, 'speed', 2),
+    startLeague: (league) => {
+      const config = leagueToConfig(league, args);
+      return createSimulation(config, config.companies.map((x) => createBrain(x.brain, { decideEvery: config.decideEvery })));
+    },
+  });
+  console.log(`\n  ${c.bold('AgentCorp')} ${c.dim(`v${VERSION}`)} — setup\n\n  Open  ${c.cyan(server.url)}\n`);
+  console.log(c.dim('  Keys are saved to ./.agentcorp/config.json (git-ignored, never logged). Ctrl+C to stop.\n'));
+  if (args.open !== false && !process.env.CI) openBrowser(server.url);
+  await new Promise(() => {});
+  return 0;
+}
+
+async function modelsCmd(args: Args): Promise<number> {
+  const prov = args._[1] as ProviderId | undefined;
+  const all = PROVIDERS.map((p) => p.id);
+  if (!prov || !all.includes(prov)) { console.error(`Usage: agentcorp models <${all.join('|')}>`); return 1; }
+  const r = await probe(prov);
+  if (!r.ok) { console.error(c.red(`${prov}: ${r.error}`)); return 1; }
+  for (const m of r.models) console.log(`${prov}:${m.id}${m.label !== m.id ? c.dim(`  ${m.label}`) : ''}`);
+  console.log(c.dim(`\n${r.models.length} models. Use one as --brains ${prov}:<model>`));
+  return 0;
+}
+
+async function seasonCmd(args: Args): Promise<number> {
+  const brains = list(args, 'brains');
+  if (!brains || brains.length < 2) throw new Error('season needs --brains a,b[,c…]');
+  const runs = Math.max(1, Math.floor(num(args, 'runs', 3)));
+  const seed0 = Math.floor(num(args, 'seed', 1));
+  const scenarios = list(args, 'scenarios') ?? [str(args, 'scenario', 'baseline')!];
+  const seeds = Array.from({ length: runs }, (_, i) => seed0 + i);
+  console.log(`${c.bold('AgentCorp season')} · ${brains.length} CEOs · ${scenarios.join(', ')} × ${runs} seeds\n`);
+  const result = await runSeason({
+    brains, template: str(args, 'template', 'saas')!, templates: list(args, 'templates'), scenarios, seeds,
+    weeks: Math.floor(num(args, 'weeks', 104)), decideEvery: Math.floor(num(args, 'decide-every', 4)), budget: budgetOf(args),
+    onRace: (race, i, total) => {
+      const w = race.table[0];
+      console.log(`${c.dim(`[${i}/${total}]`)} ${race.scenario} seed ${race.seed}: ${c.bold(w.brainLabel)} wins (${w.name}, ${fmtTokens(w.valuation)})`);
+    },
+  });
+  console.log(`\n${c.bold('Season standings')}`);
+  result.standings.forEach((s, i) => {
+    const line = `${String(i + 1).padStart(2)}. ${s.brainLabel.padEnd(22)} ${String(s.points).padStart(4)} pts  ${s.wins}W ${s.podiums}P  ${s.unicorns} unicorn  ${s.deaths} dead  avg ${fmtTokens(s.avgValuation)}`;
+    console.log(i === 0 ? c.green(line) : line);
+  });
+  const out = str(args, 'out');
+  if (out) {
+    fs.writeFileSync(out, out.endsWith('.html') ? seasonHtml(result) : JSON.stringify(result, null, 2));
+    console.log(c.dim(`\nSaved ${out}`));
+  }
+  return 0;
+}
+
+async function pitchCmd(args: Args): Promise<number> {
+  const file = args._[1];
+  if (!file) throw new Error('Usage: agentcorp pitch <replay.json> [--company c1] [--week n]');
+  const replay = readReplay(file);
+  const story = (await import(pathToFileURL(path.join(WEB_DIR, 'lib', 'story.js')).href)) as {
+    buildPitch: (r: Replay, id: string, idx: number, t: (k: string, p?: Record<string, unknown>) => string) => { title: string; slides: { title: string; lines: string[] }[] };
+    pitchMarkdown: (deck: { title: string; slides: { title: string; lines: string[] }[] }) => string;
+    makeT: (dict: Record<string, string>, en: Record<string, string>, lang: string) => (k: string, p?: Record<string, unknown>) => string;
+  };
+  const lang = detectLang(str(args, 'lang') ?? loadConfig()?.lang);
+  const read = (l: string) => JSON.parse(fs.readFileSync(path.join(WEB_DIR, 'locales', `${l}.json`), 'utf8'));
+  const t = story.makeT(read(lang), read('en'), lang);
+  const id = str(args, 'company') ?? replay.league?.[0]?.id ?? replay.companies[0].id;
+  const week = args.week ? Math.floor(num(args, 'week', 0)) : replay.frames[replay.frames.length - 1].week;
+  const idx = Math.max(0, replay.frames.findIndex((f) => f.week === week));
+  const md = story.pitchMarkdown(story.buildPitch(replay, id, idx, t));
+  const out = str(args, 'out');
+  if (out) { fs.writeFileSync(out, md); console.log(`Wrote ${out}`); } else console.log(md);
+  return 0;
+}
+
 async function runCmd(cmd: string, args: Args): Promise<number> {
-  const config = buildConfig(cmd, args);
+  return liveRun(buildConfig(cmd, args), args);
+}
+
+async function liveRun(config: SimConfig, args: Args): Promise<number> {
   // Fail fast on bad brain specs / missing keys before anything starts.
   const brains = config.companies.map((x) => createBrain(x.brain, { decideEvery: config.decideEvery }));
   const sim = createSimulation(config, brains);

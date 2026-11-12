@@ -142,13 +142,15 @@ export interface SimEvent {
   text: string;
   importance: 1 | 2 | 3;
   data?: Record<string, unknown>;
+  /** Translatable form of `text`: an i18n key plus parameters (money as raw numbers). */
+  msg?: { key: string; params?: Record<string, string | number | boolean> };
 }
 
 export type EventKind =
   | 'founded' | 'memo' | 'hire' | 'fire' | 'quit' | 'review' | 'bounty'
   | 'ship' | 'pivot' | 'price' | 'raise' | 'raise_rejected' | 'bridge'
   | 'board' | 'ceo_ousted' | 'bankrupt' | 'unicorn' | 'milestone'
-  | 'market' | 'shock' | 'chat' | 'brain_error' | 'focus';
+  | 'market' | 'shock' | 'chat' | 'brain_error' | 'focus' | 'budget';
 
 /** What a brain (the CEO's mind) decides for the coming period. */
 export interface Decision {
@@ -258,6 +260,8 @@ export interface SimConfig {
   decideEvery?: number;
   /** Tokens of company money charged per real LLM token spent (0 = off). */
   tokenCharge?: number;
+  /** Hard spend caps for LLM CEOs (tokens). When hit, the company runs on autopilot. */
+  budget?: { perAgentTokens?: number; totalTokens?: number };
   title?: string;
 }
 

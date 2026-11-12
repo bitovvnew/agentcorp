@@ -21,10 +21,10 @@ export const baseline: Scenario = {
     const w = ctx.week;
     const correction = w >= 44 && w < 64;
     drift(ctx, correction ? 0.62 : 1.05 + 0.12 * Math.sin(w / 26));
-    if (w === 20) ctx.headline('📈 VCs say AI-native startups are "the only thing we look at now"', 2);
-    if (w === 44) ctx.headline('📉 Market correction: growth-at-all-costs is out, "efficient growth" is in', 3);
-    if (w === 64) ctx.headline('🌤️ The correction is over. Investors are writing checks again.', 2);
-    if (ctx.week === 52) ctx.headline('🎂 One year in: half of last year\'s startups have quietly shut down', 2);
+    if (w === 20) ctx.headline('📈 VCs say AI-native startups are "the only thing we look at now"', 2, 'hl.baseline.20');
+    if (w === 44) ctx.headline('📉 Market correction: growth-at-all-costs is out, "efficient growth" is in', 3, 'hl.baseline.44');
+    if (w === 64) ctx.headline('🌤️ The correction is over. Investors are writing checks again.', 2, 'hl.baseline.64');
+    if (ctx.week === 52) ctx.headline('🎂 One year in: half of last year\'s startups have quietly shut down', 2, 'hl.baseline.52');
   },
 };
 
@@ -37,16 +37,16 @@ export const aiWinter: Scenario = {
     const w = ctx.week;
     const target = w < 25 ? 1.55 : w < 52 ? 0.38 : 0.95;
     drift(ctx, target, 0.02);
-    if (w === 10) ctx.headline('🚀 Seed rounds at 40x revenue are back. "This time it is different."', 2);
+    if (w === 10) ctx.headline('🚀 Seed rounds at 40x revenue are back. "This time it is different."', 2, 'hl.ai-winter.10');
     if (w === 25) {
       ctx.market.climate = 0.7;
-      ctx.headline('🥶 Funding winter: top VCs tell portfolio companies to "plan for zero"', 3);
+      ctx.headline('🥶 Funding winter: top VCs tell portfolio companies to "plan for zero"', 3, 'hl.ai-winter.25');
     }
     if (w === 30) {
       for (const s of ALL) ctx.market.demand[s] *= 0.85;
-      ctx.headline('📉 Customers freeze software budgets as the downturn spreads', 3);
+      ctx.headline('📉 Customers freeze software budgets as the downturn spreads', 3, 'hl.ai-winter.30');
     }
-    if (w === 52) ctx.headline('🌱 First green shoots: investors are "cautiously back"', 2);
+    if (w === 52) ctx.headline('🌱 First green shoots: investors are "cautiously back"', 2, 'hl.ai-winter.52');
   },
 };
 
@@ -58,8 +58,8 @@ export const bullRun: Scenario = {
   onWeek(ctx) {
     drift(ctx, 1.65, 0.02);
     for (const s of ALL) ctx.market.demand[s] = clamp(ctx.market.demand[s] + 0.002, 0.4, 1.8);
-    if (ctx.week === 8) ctx.headline('💸 A pre-product startup just raised at a ◈1B valuation. Everyone is hiring.', 3);
-    if (ctx.week === 60) ctx.headline('🫧 Analysts warn of a bubble. Nobody listens.', 2);
+    if (ctx.week === 8) ctx.headline('💸 A pre-product startup just raised at a ◈1B valuation. Everyone is hiring.', 3, 'hl.bull-run.8');
+    if (ctx.week === 60) ctx.headline('🫧 Analysts warn of a bubble. Nobody listens.', 2, 'hl.bull-run.60');
   },
 };
 
@@ -75,8 +75,8 @@ export const recession: Scenario = {
       for (const s of ALL) ctx.market.demand[s] = clamp(ctx.market.demand[s] - 0.006, 0.55, 1.8);
       ctx.market.churnMult = clamp(ctx.market.churnMult + 0.03, 0.6, 1.7);
     }
-    if (w === 12) ctx.headline('🏦 Central bank hikes rates again. "Profitability is the new growth."', 3);
-    if (w === 40) ctx.headline('🧾 Layoffs.fyi tracker hits a record week', 2);
+    if (w === 12) ctx.headline('🏦 Central bank hikes rates again. "Profitability is the new growth."', 3, 'hl.recession.12');
+    if (w === 40) ctx.headline('🧾 Layoffs.fyi tracker hits a record week', 2, 'hl.recession.40');
   },
 };
 
@@ -90,14 +90,14 @@ export const blackSwan: Scenario = {
     const r = ctx.rng();
     if (ctx.week > 6 && r < 0.035) {
       ctx.market.climate = clamp(ctx.market.climate * 0.55, 0.25, 1.9);
-      ctx.headline('💥 Flash crash: tech stocks lose a third overnight. Term sheets pulled.', 3);
+      ctx.headline('💥 Flash crash: tech stocks lose a third overnight. Term sheets pulled.', 3, 'hl.black-swan.crash');
     } else if (ctx.week > 6 && r < 0.06) {
       const seg = ALL[Math.floor(ctx.rng() * ALL.length)];
       ctx.market.demand[seg] = clamp(ctx.market.demand[seg] * 1.5, 0.4, 1.8);
-      ctx.headline(`🔥 Sudden demand spike in ${seg} software — buyers are panic-purchasing`, 3);
+      ctx.headline(`🔥 Sudden demand spike in ${seg} software — buyers are panic-purchasing`, 3, { key: 'hl.black-swan.spike', params: { seg } });
     } else if (ctx.week > 6 && r < 0.08) {
       ctx.market.churnMult = clamp(ctx.market.churnMult * 1.4, 0.6, 2);
-      ctx.headline('⚠️ A major cloud outage shakes trust in startups. Churn spikes.', 2);
+      ctx.headline('⚠️ A major cloud outage shakes trust in startups. Churn spikes.', 2, 'hl.black-swan.outage');
     }
   },
 };

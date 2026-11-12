@@ -1,9 +1,16 @@
-// Tiny zero-dependency HTTP server: serves the dashboard, streams frames over SSE, accepts controls.
+// Zero-dependency HTTP server: dashboard, onboarding, SSE stream, controls.
+// Binds to 127.0.0.1, rejects foreign Host headers (DNS rebinding) and requires a custom header on
+// every POST (blocks cross-site requests), because the setup endpoints handle API keys.
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SHOCKS, type ShockKind, type Simulation } from './engine.js';
+import { listScenarios, listTemplates } from './plugins/index.js';
+import { PERSONALITIES } from './brains/index.js';
+import { PROVIDERS, detectEnv, probe, type ProviderId } from './providers.js';
+import { applyConfig, loadConfig, saveConfig, type AgentCorpConfig, type LeagueSetup } from './config.js';
+import { maskKey, redact } from './security.js';
 import type { Replay } from './types.js';
 
 export const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'web');
@@ -14,20 +21,18 @@ const MIME: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
-  '.json': 'application/json',
-  '.ico': 'image/x-icon',
+  '.json': 'application/json; charset=utf-8',
+  '.woff2': 'font/woff2',
 };
 
 export interface ServeOptions {
   port: number;
   host?: string;
-  /** Live mode: the simulation to run. */
   sim?: Simulation;
-  /** Replay mode: a finished run to show. */
   replay?: Replay;
-  /** Weeks per second in live mode. 0 = as fast as possible. */
+  /** Onboarding mode: called when the user presses Start in the web wizard. */
+  startLeague?: (league: LeagueSetup) => Simulation;
   speed?: number;
-  /** Start paused (useful for screenshots). */
   paused?: boolean;
   onFinish?: (replay: Replay) => void;
   quiet?: boolean;
@@ -40,41 +45,58 @@ export interface RunningServer {
 }
 
 export async function serve(opts: ServeOptions): Promise<RunningServer> {
-  const { sim } = opts;
+  let sim = opts.sim;
   const clients = new Set<http.ServerResponse>();
   let speed = opts.speed ?? 2;
   let paused = !!opts.paused;
+  let stopped = false;
   let resolveDone!: (r: Replay | undefined) => void;
   const done = new Promise<Replay | undefined>((r) => (resolveDone = r));
 
-  const send = (res: http.ServerResponse, event: string, data: unknown) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  };
-  const broadcast = (event: string, data: unknown) => {
-    for (const c of clients) send(c, event, data);
-  };
-  const status = () => ({ mode: sim ? 'live' : 'replay', paused, speed, week: sim?.week ?? 0, finished: sim ? sim.finished : true });
+  const send = (res: http.ServerResponse, event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  const broadcast = (event: string, data: unknown) => { for (const c of clients) send(c, event, data); };
+  const mode = () => (sim ? 'live' : opts.replay ? 'replay' : 'setup');
+  const status = () => ({ mode: mode(), paused, speed, week: sim?.week ?? 0, finished: sim ? sim.finished : !!opts.replay });
 
-  if (sim) {
-    sim.onFrame((frame, events) => {
+  const attach = (s: Simulation) => {
+    sim = s;
+    s.onFrame((frame, events) => {
       broadcast('tick', { frame, events });
-      if (sim.finished) broadcast('done', { league: sim.league() });
+      if (s.finished) broadcast('done', { league: s.league() });
     });
-  }
+    (async () => {
+      while (!stopped && !s.finished) {
+        if (paused) { await sleep(120); continue; }
+        await s.step();
+        await sleep(speed > 0 ? 1000 / speed : 0);
+      }
+      if (!stopped) {
+        const r = s.toReplay();
+        opts.onFinish?.(r);
+        resolveDone(r);
+      }
+    })().catch((err) => {
+      broadcast('error', { message: redact(err) });
+      if (!opts.quiet) console.error(redact(err));
+      resolveDone(undefined);
+    });
+    broadcast('status', status());
+  };
 
   const server = http.createServer(async (req, res) => {
     try {
+      const host = (req.headers.host ?? '').toLowerCase();
+      if (!/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host)) return json(res, { error: 'forbidden host' }, 403);
+      if (req.method === 'POST' && req.headers['x-agentcorp'] !== '1') return json(res, { error: 'missing x-agentcorp header' }, 403);
       const url = new URL(req.url ?? '/', 'http://localhost');
       const p = url.pathname;
-      if (p === '/api/replay') return json(res, sim ? sim.toReplay() : opts.replay);
+
+      if (p === '/api/replay') return json(res, sim ? sim.toReplay() : opts.replay ?? null);
       if (p === '/api/status') return json(res, status());
       if (p === '/api/shocks') return json(res, SHOCKS);
       if (p === '/api/download') {
         const r = sim ? sim.toReplay() : opts.replay;
-        res.writeHead(200, {
-          'content-type': 'application/json',
-          'content-disposition': `attachment; filename="agentcorp-replay-${r?.config.seed ?? 'run'}.json"`,
-        });
+        res.writeHead(200, { 'content-type': 'application/json', 'content-disposition': `attachment; filename="agentcorp-replay-${r?.config.seed ?? 'run'}.json"` });
         return res.end(JSON.stringify(r));
       }
       if (p === '/api/stream') {
@@ -96,38 +118,69 @@ export async function serve(opts: ServeOptions): Promise<RunningServer> {
         broadcast('status', status());
         return json(res, status());
       }
+
+      // ── onboarding ──
+      if (p === '/api/setup' && req.method === 'GET') {
+        const cfg = loadConfig();
+        return json(res, {
+          configured: !!cfg?.league,
+          lang: cfg?.lang,
+          env: detectEnv(),
+          saved: Object.fromEntries(Object.entries(cfg?.keys ?? {}).map(([k, v]) => [k, maskKey(v)])),
+          league: cfg?.league,
+          providers: PROVIDERS,
+          templates: listTemplates().map((t) => ({ id: t.id, name: t.name, segment: t.segment, cash: t.cash, team: t.team.length, description: t.description })),
+          scenarios: listScenarios().map((s) => ({ id: s.id, name: s.name, description: s.description })),
+          personalities: Object.values(PERSONALITIES).map((x) => ({ id: x.id, label: x.label, blurb: x.blurb })),
+        });
+      }
+      if (p === '/api/setup/models' && req.method === 'POST') {
+        const body = await readBody(req);
+        const provider = String(body.provider) as ProviderId;
+        if (!PROVIDERS.some((x) => x.id === provider)) return json(res, { error: 'unknown provider' }, 400);
+        const key = typeof body.key === 'string' && body.key.trim() ? body.key.trim() : loadConfig()?.keys[provider];
+        return json(res, await probe(provider, key, typeof body.baseURL === 'string' ? body.baseURL : undefined));
+      }
+      if (p === '/api/setup/save' && req.method === 'POST') {
+        const body = await readBody(req);
+        const prev: AgentCorpConfig = loadConfig() ?? { version: 1, keys: {} };
+        const keys = { ...prev.keys };
+        for (const [k, v] of Object.entries((body.keys ?? {}) as Record<string, unknown>)) {
+          if (!PROVIDERS.some((x) => x.id === k)) continue;
+          if (typeof v === 'string' && v.trim()) keys[k as ProviderId] = v.trim();
+          if (v === null) delete keys[k as ProviderId];
+        }
+        const next: AgentCorpConfig = {
+          ...prev, version: 1, keys,
+          lang: typeof body.lang === 'string' ? body.lang : prev.lang,
+          league: (body.league as LeagueSetup | undefined) ?? prev.league,
+          ollamaURL: typeof body.ollamaURL === 'string' ? body.ollamaURL : prev.ollamaURL,
+        };
+        saveConfig(next);
+        applyConfig(next);
+        return json(res, { ok: true });
+      }
+      if (p === '/api/setup/start' && req.method === 'POST') {
+        if (sim) return json(res, { error: 'already running' }, 409);
+        if (!opts.startLeague) return json(res, { error: 'not in setup mode' }, 400);
+        const body = await readBody(req);
+        try {
+          attach(opts.startLeague(body.league as LeagueSetup));
+        } catch (err) {
+          return json(res, { error: redact(err) }, 400);
+        }
+        return json(res, status());
+      }
       return serveStatic(res, p);
     } catch (err) {
-      json(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      json(res, { error: redact(err) }, 400);
     }
   });
 
   const port = await listen(server, opts.port, opts.host ?? '127.0.0.1');
   const url = `http://localhost:${port}`;
-
-  // Live loop
-  let stopped = false;
-  if (sim) {
-    (async () => {
-      while (!stopped && !sim.finished) {
-        if (paused) { await sleep(120); continue; }
-        await sim.step();
-        if (speed > 0) await sleep(1000 / speed);
-        else await sleep(0);
-      }
-      if (!stopped) {
-        const r = sim.toReplay();
-        opts.onFinish?.(r);
-        resolveDone(r);
-      }
-    })().catch((err) => {
-      broadcast('error', { message: err instanceof Error ? err.message : String(err) });
-      if (!opts.quiet) console.error(err);
-      resolveDone(undefined);
-    });
-  } else {
-    resolveDone(opts.replay);
-  }
+  if (sim) attach(sim);
+  else if (opts.replay) resolveDone(opts.replay);
 
   return {
     url,
@@ -143,16 +196,21 @@ export async function serve(opts: ServeOptions): Promise<RunningServer> {
 function serveStatic(res: http.ServerResponse, p: string) {
   const rel = p === '/' ? 'index.html' : decodeURIComponent(p).replace(/^\/+/, '');
   const file = path.resolve(WEB_DIR, rel);
-  if (!file.startsWith(WEB_DIR) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+  if (!file.startsWith(WEB_DIR + path.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
     res.writeHead(404, { 'content-type': 'text/plain' });
     return res.end('Not found');
   }
-  res.writeHead(200, { 'content-type': MIME[path.extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
+  res.writeHead(200, {
+    'content-type': MIME[path.extname(file)] ?? 'application/octet-stream',
+    'cache-control': 'no-cache',
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'no-referrer',
+  });
   fs.createReadStream(file).pipe(res);
 }
 
 function json(res: http.ServerResponse, data: unknown, code = 200) {
-  res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
+  res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' });
   res.end(JSON.stringify(data ?? null));
 }
 
@@ -161,7 +219,7 @@ function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
     let data = '';
     req.on('data', (c) => {
       data += c;
-      if (data.length > 1e5) reject(new Error('body too large'));
+      if (data.length > 2e5) { reject(new Error('body too large')); req.destroy(); }
     });
     req.on('end', () => {
       try { resolve(data ? JSON.parse(data) : {}); } catch { reject(new Error('invalid JSON')); }
@@ -189,13 +247,22 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** Build a single self-contained HTML file with the replay embedded — easy to share anywhere. */
+const read = (rel: string) => fs.readFileSync(path.join(WEB_DIR, rel), 'utf8');
+
+/** One self-contained HTML file: styles, scripts, locales and the replay inlined. Opens anywhere. */
 export function exportHtml(replay: Replay): string {
-  const html = fs.readFileSync(path.join(WEB_DIR, 'index.html'), 'utf8');
-  const css = fs.readFileSync(path.join(WEB_DIR, 'styles.css'), 'utf8');
-  const js = fs.readFileSync(path.join(WEB_DIR, 'app.js'), 'utf8');
+  const html = read('index.html');
+  const css = read('styles.css');
+  const imports: Record<string, string> = {};
+  for (const f of fs.readdirSync(path.join(WEB_DIR, 'lib'))) {
+    if (f.endsWith('.js')) imports[`./lib/${f}`] = `data:text/javascript;base64,${Buffer.from(read(`lib/${f}`)).toString('base64')}`;
+  }
+  const locales: Record<string, unknown> = {};
+  for (const f of fs.readdirSync(path.join(WEB_DIR, 'locales'))) locales[f.replace('.json', '')] = JSON.parse(read(`locales/${f}`));
   const data = JSON.stringify(replay).replace(/</g, '\\u003c');
+  const loc = JSON.stringify(locales).replace(/</g, '\\u003c');
   return html
     .replace('<link rel="stylesheet" href="styles.css">', () => `<style>\n${css}\n</style>`)
-    .replace('<script type="module" src="app.js"></script>', () => `<script>window.__AGENTCORP_REPLAY__ = ${data};</script>\n<script type="module">\n${js}\n</script>`);
+    .replace('<script type="module" src="app.js"></script>', () =>
+      `<script type="importmap">${JSON.stringify({ imports })}</script>\n<script>window.__AGENTCORP_REPLAY__ = ${data}; window.__AGENTCORP_LOCALES__ = ${loc};</script>\n<script type="module">\n${read('app.js')}\n</script>`);
 }

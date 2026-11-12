@@ -2,8 +2,9 @@
 // Keys are read from the environment only, and never written to replays or logs.
 import type { Brain, BrainContext, BrainResult, BrainUsage, Decision, Observation } from '../types.js';
 import { DECISION_SCHEMA, SYSTEM_PROMPT, parseDecision, userPrompt } from './prompt.js';
+import { limiterFor, redact, registerSecret } from '../security.js';
 
-export type Provider = 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'openai-compatible';
+export type Provider = 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'openrouter' | 'openai-compatible';
 
 export interface LlmOptions {
   provider: Provider;
@@ -43,16 +44,17 @@ export class LlmBrain implements Brain {
     let usage: BrainUsage = { inputTokens: 0, outputTokens: 0 };
     for (let attempt = 0; attempt <= this.retries; attempt++) {
       try {
-        const res = await this.call(SYSTEM_PROMPT, user, AbortSignal.timeout(this.timeoutMs));
+        const res = await limiterFor(this.options.provider).run(() => this.call(SYSTEM_PROMPT, user, AbortSignal.timeout(this.timeoutMs)));
         if (res.usage) usage = { inputTokens: usage.inputTokens + res.usage.inputTokens, outputTokens: usage.outputTokens + res.usage.outputTokens };
         const decision = parseDecision(res.text) as Decision;
         return { decision, usage };
       } catch (err) {
         lastErr = err;
-        if (attempt < this.retries) await sleep(800 * (attempt + 1));
+        const retryAfter = (err as { retryAfterMs?: number }).retryAfterMs;
+        if (attempt < this.retries) await sleep(Math.min(30_000, retryAfter ?? 800 * 2 ** attempt));
       }
     }
-    const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+    const msg = redact(lastErr);
     return { decision: undefined as unknown as Decision, usage, error: msg };
   }
 }
@@ -66,6 +68,7 @@ function makeCall(o: LlmOptions): Call {
     case 'anthropic': return anthropicCall(o);
     case 'gemini': return geminiCall(o);
     case 'ollama': return openAiCompatibleCall({ ...o, baseURL: o.baseURL ?? process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434/v1', apiKey: o.apiKey ?? 'ollama' });
+    case 'openrouter': return openAiCompatibleCall({ ...o, baseURL: o.baseURL ?? 'https://openrouter.ai/api/v1', apiKey: o.apiKey ?? process.env.OPENROUTER_API_KEY });
     case 'openai': return openAiCompatibleCall({ ...o, baseURL: o.baseURL ?? process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1', apiKey: o.apiKey ?? process.env.OPENAI_API_KEY });
     case 'openai-compatible': return openAiCompatibleCall({ ...o, baseURL: o.baseURL ?? process.env.AGENTCORP_BASE_URL, apiKey: o.apiKey ?? process.env.AGENTCORP_API_KEY });
     default: throw new Error(`Unknown provider: ${String(o.provider)}`);
@@ -75,7 +78,8 @@ function makeCall(o: LlmOptions): Call {
 /** OpenAI Chat Completions — also used for Ollama and any OpenAI-compatible server. */
 function openAiCompatibleCall(o: LlmOptions): Call {
   if (!o.baseURL) throw new Error(`${o.provider}: set a base URL (AGENTCORP_BASE_URL)`);
-  if (!o.apiKey) throw new Error(`${o.provider}: missing API key (set ${o.provider === 'openai' ? 'OPENAI_API_KEY' : 'AGENTCORP_API_KEY'})`);
+  if (!o.apiKey) throw new Error(`${o.provider}: missing API key (set ${o.provider === 'openai' ? 'OPENAI_API_KEY' : o.provider === 'openrouter' ? 'OPENROUTER_API_KEY' : 'AGENTCORP_API_KEY'}, or run agentcorp setup)`);
+  registerSecret(o.apiKey);
   const url = `${o.baseURL.replace(/\/$/, '')}/chat/completions`;
   return async (system, user, signal) => {
     const res = await fetch(url, {
@@ -88,7 +92,7 @@ function openAiCompatibleCall(o: LlmOptions): Call {
         response_format: { type: 'json_object' },
       }),
     });
-    if (!res.ok) throw new Error(`${o.provider} HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    if (!res.ok) throw httpError(o.provider, res, await res.text());
     const json = (await res.json()) as {
       choices?: { message?: { content?: string } }[];
       usage?: { prompt_tokens?: number; completion_tokens?: number };
@@ -101,7 +105,8 @@ function openAiCompatibleCall(o: LlmOptions): Call {
 /** Google Gemini generateContent REST API (key sent as a header, never in the URL). */
 function geminiCall(o: LlmOptions): Call {
   const key = o.apiKey ?? process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
-  if (!key) throw new Error('gemini: missing API key (set GEMINI_API_KEY)');
+  if (!key) throw new Error('gemini: missing API key (set GEMINI_API_KEY, or run agentcorp setup)');
+  registerSecret(key);
   const base = (o.baseURL ?? 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, '');
   const url = `${base}/models/${encodeURIComponent(o.model)}:generateContent`;
   return async (system, user, signal) => {
@@ -115,7 +120,7 @@ function geminiCall(o: LlmOptions): Call {
         generationConfig: { responseMimeType: 'application/json' },
       }),
     });
-    if (!res.ok) throw new Error(`gemini HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    if (!res.ok) throw httpError('gemini', res, await res.text());
     const json = (await res.json()) as {
       candidates?: { content?: { parts?: { text?: string }[] } }[];
       usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
@@ -132,8 +137,9 @@ function geminiCall(o: LlmOptions): Call {
  */
 function anthropicCall(o: LlmOptions): Call {
   if (!o.apiKey && !process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
-    throw new Error('anthropic: missing credentials (set ANTHROPIC_API_KEY)');
+    throw new Error('anthropic: missing credentials (set ANTHROPIC_API_KEY, or run agentcorp setup)');
   }
+  registerSecret(o.apiKey ?? process.env.ANTHROPIC_API_KEY);
   let clientPromise: Promise<unknown> | undefined;
   const getClient = async () => {
     clientPromise ??= import('@anthropic-ai/sdk').then((m) => {
@@ -162,6 +168,13 @@ function anthropicCall(o: LlmOptions): Call {
     const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text ?? '').join('');
     return { text, usage: { inputTokens: msg.usage?.input_tokens ?? 0, outputTokens: msg.usage?.output_tokens ?? 0 } };
   };
+}
+
+function httpError(provider: string, res: Response, body: string): Error {
+  const err = new Error(`${provider} HTTP ${res.status}: ${redact(body.slice(0, 200))}`) as Error & { retryAfterMs?: number };
+  const ra = Number(res.headers.get('retry-after'));
+  if (res.status === 429 && Number.isFinite(ra) && ra > 0) err.retryAfterMs = ra * 1000;
+  return err;
 }
 
 interface AnthropicReply {

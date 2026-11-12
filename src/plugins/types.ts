@@ -23,7 +23,7 @@ export interface ScenarioContext {
   weeks: number;
   rng: Rng;
   /** Post a market-wide headline to #market. importance 3 = top story. */
-  headline(text: string, importance?: 1 | 2 | 3): void;
+  headline(text: string, importance?: 1 | 2 | 3, i18n?: string | { key: string; params?: Record<string, string | number> }): void;
 }
 
 /** A scenario shapes the market over time: funding climate, demand, churn, shocks. */

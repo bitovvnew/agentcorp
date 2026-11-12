@@ -6,12 +6,10 @@ export { HeuristicBrain, PERSONALITIES, decideHeuristic } from './heuristic.js';
 export { LlmBrain } from './llm.js';
 export { SYSTEM_PROMPT, DECISION_SCHEMA, parseDecision, userPrompt } from './prompt.js';
 
-const PROVIDERS: Provider[] = ['openai', 'anthropic', 'gemini', 'ollama', 'openai-compatible'];
+const PROVIDERS: Provider[] = ['openai', 'anthropic', 'gemini', 'ollama', 'openrouter', 'openai-compatible'];
 
-export const DEFAULT_MODELS: Partial<Record<Provider, string>> = {
-  anthropic: 'claude-opus-5-5',
-  ollama: 'llama3.2',
-};
+/** No hard-coded model names: models come from each provider's API (`agentcorp models <provider>`). */
+export const DEFAULT_MODELS: Partial<Record<Provider, string>> = {};
 
 /**
  * Brain spec strings:
@@ -33,7 +31,7 @@ export function createBrain(spec: string, opts: { decideEvery?: number } = {}): 
   if ((PROVIDERS as string[]).includes(key)) {
     const provider = key as Provider;
     const model = tail || DEFAULT_MODELS[provider] || envModel(provider);
-    if (!model) throw new Error(`Brain "${spec}": name a model, e.g. ${provider}:<model-id>`);
+    if (!model) throw new Error(`Brain "${spec}": name a model, e.g. ${provider}:<model-id>. List them with: agentcorp models ${provider}`);
     return new LlmBrain({ provider, model, decideEvery: opts.decideEvery });
   }
   throw new Error(`Unknown brain "${spec}". Use a personality (${Object.keys(PERSONALITIES).join(', ')}) or provider:model (${PROVIDERS.join(', ')}).`);
@@ -47,10 +45,11 @@ function envModel(p: Provider): string | undefined {
 export function listBrains(): { spec: string; label: string; description: string }[] {
   return [
     ...Object.values(PERSONALITIES).map((p) => ({ spec: p.id, label: p.label, description: p.blurb })),
-    { spec: 'anthropic[:model]', label: 'Claude', description: `Anthropic API via the official SDK (default ${DEFAULT_MODELS.anthropic}). Needs ANTHROPIC_API_KEY.` },
+    { spec: 'anthropic:<model>', label: 'Claude', description: 'Anthropic API via the official SDK. Needs ANTHROPIC_API_KEY.' },
     { spec: 'openai:<model>', label: 'OpenAI', description: 'OpenAI Chat Completions. Needs OPENAI_API_KEY.' },
     { spec: 'gemini:<model>', label: 'Gemini', description: 'Google Gemini API. Needs GEMINI_API_KEY.' },
-    { spec: 'ollama[:model]', label: 'Ollama', description: `Local models via Ollama (default ${DEFAULT_MODELS.ollama}). No key.` },
+    { spec: 'ollama:<model>', label: 'Ollama', description: 'Local models via Ollama. No key.' },
+    { spec: 'openrouter:<model>', label: 'OpenRouter', description: 'Hundreds of models through one key. Needs OPENROUTER_API_KEY.' },
     { spec: 'openai-compatible:<model>', label: 'Any OpenAI-compatible API', description: 'OpenRouter, vLLM, LM Studio… Set AGENTCORP_BASE_URL and AGENTCORP_API_KEY.' },
   ];
 }

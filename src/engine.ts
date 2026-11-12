@@ -9,6 +9,7 @@ import { BOUNTIES, FOCUS_LABEL, QUIT_REASONS, REJECTIONS, chatter } from './narr
 import { personName, vcName } from './names.js';
 import { getScenario, getTemplate, type Scenario } from './plugins/index.js';
 import { chance, clamp, deriveSeed, gauss, mulberry32, pick, range, type Rng } from './rng.js';
+import { cleanUntrusted, redact } from './security.js';
 import type {
   Brain, Channel, Company, CompanyMeta, CompanySnapshot, Decision, Employee, EventKind, Frame,
   LeagueRow, Market, Observation, Replay, Role, Segment, SimConfig, SimEvent, WeekStat,
@@ -19,12 +20,12 @@ export const VERSION = '0.1.0';
 
 export type ShockKind = 'funding-freeze' | 'mania' | 'recession' | 'viral' | 'outage' | 'poach';
 export const SHOCKS: { id: ShockKind; label: string }[] = [
-  { id: 'funding-freeze', label: '🥶 Funding freeze' },
-  { id: 'mania', label: '🚀 VC mania' },
-  { id: 'recession', label: '📉 Recession' },
-  { id: 'viral', label: '🔥 Viral moment' },
-  { id: 'outage', label: '💥 Major outage' },
-  { id: 'poach', label: '🧲 Poach top engineer' },
+  { id: 'funding-freeze', label: 'Funding freeze' },
+  { id: 'mania', label: 'VC mania' },
+  { id: 'recession', label: 'Recession' },
+  { id: 'viral', label: 'Viral moment' },
+  { id: 'outage', label: 'Major outage' },
+  { id: 'poach', label: 'Poach top engineer' },
 ];
 
 export type FrameListener = (frame: Frame, events: SimEvent[]) => void;
@@ -43,7 +44,7 @@ const MAX_HIRES_PER_WEEK = 4;
 const MAX_HEADCOUNT = 400;
 
 export class Simulation {
-  readonly config: Required<Omit<SimConfig, 'title'>> & { title?: string };
+  readonly config: Required<Omit<SimConfig, 'title' | 'budget'>> & { title?: string; budget: { perAgentTokens: number; totalTokens: number } };
   readonly scenario: Scenario;
   readonly companies: Company[] = [];
   readonly market: Market;
@@ -63,6 +64,14 @@ export class Simulation {
   private readonly milestones = new Map<string, Set<string>>();
   private readonly peakValuation = new Map<string, number>();
   private nextEventId = 1;
+  private readonly budgetHit = new Set<string>();
+
+  /** True when this company's CEO (or the whole league) has used up its LLM token budget. */
+  overBudget(c: Company): boolean {
+    const b = this.config.budget;
+    const total = this.companies.reduce((s, x) => s + x.llmTokens, 0);
+    return (!!b.perAgentTokens && c.llmTokens >= b.perAgentTokens) || (!!b.totalTokens && total >= b.totalTokens);
+  }
   private pendingEvents: SimEvent[] = [];
 
   /**
@@ -79,6 +88,10 @@ export class Simulation {
       companies: config.companies,
       decideEvery: Math.max(1, Math.floor(config.decideEvery ?? 4)),
       tokenCharge: Math.max(0, config.tokenCharge ?? 0),
+      budget: {
+        perAgentTokens: config.budget?.perAgentTokens ?? 400_000,
+        totalTokens: config.budget?.totalTokens ?? 2_000_000,
+      },
       title: config.title,
     };
     this.brains = brains;
@@ -148,7 +161,7 @@ export class Simulation {
     };
     this.milestones.set(id, new Set());
     this.peakValuation.set(id, c.valuation);
-    this.emit('founded', c, 'general', `🚀 ${c.name} is founded — "${c.tagline}". ${tpl.name}, ${fmtTokens(c.cash)} in the bank, ${employees.length} people. CEO brain: ${brain.label}.`, 3, ceo.name, 'ceo');
+    this.emit('founded', c, 'general', `🚀 ${c.name} is founded — "${c.tagline}". ${tpl.name}, ${fmtTokens(c.cash)} in the bank, ${employees.length} people. CEO brain: ${brain.label}.`, 3, ceo.name, 'ceo', undefined, { key: 'ev.founded', params: { name: c.name, tagline: c.tagline, template: tpl.id, cash: c.cash, people: employees.length, brain: brain.label } });
     return c;
   }
 
@@ -195,9 +208,9 @@ export class Simulation {
       week: this.week,
       weeks: this.config.weeks,
       rng: this.rng,
-      headline: (text, importance = 2) => {
-        this.market.headline = text;
-        this.emit('market', undefined, 'market', text, importance, 'Market wire', 'market');
+      headline: (text, importance = 2, key) => {
+        this.market.headline = stripEmoji(text);
+        this.emit('market', undefined, 'market', text, importance, 'Market wire', 'market', undefined, key ? (typeof key === 'string' ? { key } : key) : undefined);
       },
     });
     this.applyShocks();
@@ -229,7 +242,7 @@ export class Simulation {
       const table = this.league();
       const winner = table[0];
       if (winner) {
-        this.emit('milestone', undefined, 'market', `🏁 Season over after ${this.week} weeks. Winner: ${winner.name} (${winner.brainLabel}) at ${fmtTokens(winner.valuation)}.`, 3, 'AgentCorp League', 'system');
+        this.emit('milestone', undefined, 'market', `🏁 Season over after ${this.week} weeks. Winner: ${winner.name} (${winner.brainLabel}) at ${fmtTokens(winner.valuation)}.`, 3, 'AgentCorp League', 'system', undefined, { key: 'ev.seasonOver', params: { weeks: this.week, name: winner.name, brain: winner.brainLabel, valuation: winner.valuation } });
       }
     }
     const frame = this.frames[this.frames.length - 1];
@@ -305,7 +318,7 @@ export class Simulation {
       weeksLeft: this.config.weeks - this.week + 1,
       goal: `Reach a ${fmtTokens(UNICORN)} valuation (unicorn) before week ${this.config.weeks} without running out of cash. Money is tokens (◈).`,
       company: {
-        name: c.name,
+        name: cleanUntrusted(c.name, 60),
         segment: c.product.segment,
         focus: c.focus,
         pivots: c.pivots,
@@ -330,7 +343,7 @@ export class Simulation {
         status: c.status,
       },
       team: active(c).map((e) => ({
-        id: e.id, name: e.name, role: e.role, level: e.level, salary: e.salary,
+        id: e.id, name: cleanUntrusted(e.name, 40), role: e.role, level: e.level, salary: e.salary,
         performance: round2(e.performance), morale: round2(e.morale), tenureWeeks: this.week - e.hiredWeek,
       })),
       headcountByRole: byRole,
@@ -339,13 +352,14 @@ export class Simulation {
         demand: round2(this.market.demand[c.product.segment]),
         saturation: round3(segTotal / seg.tam),
         segmentPrice: seg.wtp,
-        headline: this.market.headline,
+        headline: this.market.headline ? cleanUntrusted(this.market.headline) : undefined,
       },
+      // Rivals are visible only as numbers and a name, never their memos or chat (no cross-agent channel).
       competitors: this.companies.filter((x) => x.id !== c.id).map((x) => ({
-        name: x.name, segment: x.product.segment, valuation: Math.round(x.valuation), customers: Math.round(x.customers),
+        name: cleanUntrusted(x.name, 60), segment: x.product.segment, valuation: Math.round(x.valuation), customers: Math.round(x.customers),
         quality: Math.round(x.product.quality), status: x.status,
       })),
-      recent: this.events.filter((e) => e.companyId === c.id && e.importance >= 2).slice(-8).map((e) => `W${e.week}: ${e.text}`),
+      recent: this.events.filter((e) => e.companyId === c.id && e.importance >= 2).slice(-8).map((e) => `W${e.week}: ${cleanUntrusted(e.text, 200)}`),
       salaryGuide: { ...BASE_SALARY },
     };
   }
@@ -364,6 +378,16 @@ export class Simulation {
     const obs = this.observe(c);
     const ctx = { random: this.brng[i] };
     let decision: Decision;
+    if (brain.kind === 'llm' && this.overBudget(c)) {
+      if (!this.budgetHit.has(c.id)) {
+        this.budgetHit.add(c.id);
+        this.emit('budget', c, 'general', `Spend cap reached (${c.llmTokens.toLocaleString('en-US')} LLM tokens). ${brain.label} is paused; autopilot runs the company.`, 2, 'System', 'system', undefined, { key: 'ev.budget', params: { tokens: c.llmTokens, brain: brain.label } });
+      }
+      const res = await (this.fallback ?? brain).decide(obs, ctx);
+      decision = sanitize(res.decision, c);
+      c.lastDecision = decision;
+      return decision;
+    }
     try {
       const res = await brain.decide(obs, ctx);
       decision = sanitize(res.decision, c);
@@ -376,8 +400,8 @@ export class Simulation {
       this.brainErrors[i] = (this.brainErrors[i] ?? 0) + 1;
       const n = this.brainErrors[i];
       if (n === 1 || n % 10 === 0) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.emit('brain_error', c, 'general', `⚠️ ${brain.label} failed to decide (${msg.slice(0, 140)}). Autopilot takes over this week.`, 2, 'System', 'system');
+        const msg = redact(err);
+        this.emit('brain_error', c, 'general', `⚠️ ${brain.label} failed to decide (${msg.slice(0, 140)}). Autopilot takes over this week.`, 2, 'System', 'system', undefined, { key: 'ev.brainError', params: { brain: brain.label, msg: msg.slice(0, 140) } });
       }
       if (!this.fallback) throw err;
       const res = await this.fallback.decide(obs, ctx);
@@ -395,18 +419,19 @@ export class Simulation {
       this.emit('memo', c, 'general', d.memo, 2, ceo?.name ?? c.ceoName, 'ceo');
     }
     if (d.focus !== c.focus) {
-      this.emit('focus', c, 'general', `🎯 New focus: ${FOCUS_LABEL[d.focus]}.`, 1, ceo?.name ?? c.ceoName, 'ceo', { focus: d.focus });
+      this.emit('focus', c, 'general', `🎯 New focus: ${FOCUS_LABEL[d.focus]}.`, 1, ceo?.name ?? c.ceoName, 'ceo', { focus: d.focus }, { key: 'ev.focus', params: { focus: d.focus } });
       c.focus = d.focus;
     }
     if (d.price !== undefined && Math.abs(d.price - c.product.price) / c.product.price > 0.04) {
       const up = d.price > c.product.price;
-      this.emit('price', c, 'sales', `${up ? '⬆️ Price increase' : '⬇️ Price cut'}: ${fmtPrice(c.product.price)} → ${fmtPrice(d.price)} per customer/week.`, 2, ceo?.name ?? c.ceoName, 'ceo');
+      this.emit('price', c, 'sales', `${up ? '⬆️ Price increase' : '⬇️ Price cut'}: ${fmtPrice(c.product.price)} → ${fmtPrice(d.price)} per customer/week.`, 2, ceo?.name ?? c.ceoName, 'ceo', undefined, { key: up ? 'ev.priceUp' : 'ev.priceDown', params: { from: c.product.price, to: d.price } });
       c.product.price = d.price;
     }
     if (d.marketingBudget !== undefined) c.marketingBudget = d.marketingBudget;
 
     if (d.pivot && d.pivot !== c.product.segment && c.pivots < 3) {
       const from = SEGMENTS[c.product.segment].label;
+      const fromSeg = c.product.segment;
       const to = SEGMENTS[d.pivot];
       c.pivots += 1;
       c.product.segment = d.pivot;
@@ -416,7 +441,7 @@ export class Simulation {
       c.customers *= 0.25;
       c.product.price = to.wtp * 0.9;
       for (const e of active(c)) e.morale = clamp(e.morale - 0.08, 0, 1);
-      this.emit('pivot', c, 'general', `🔄 PIVOT! ${c.name} is leaving ${from} for ${to.label}. Most customers are gone; the roadmap starts over.`, 3, ceo?.name ?? c.ceoName, 'ceo', { to: d.pivot });
+      this.emit('pivot', c, 'general', `🔄 PIVOT! ${c.name} is leaving ${from} for ${to.label}. Most customers are gone; the roadmap starts over.`, 3, ceo?.name ?? c.ceoName, 'ceo', { to: d.pivot }, { key: 'ev.pivot', params: { name: c.name, from: fromSeg, to: d.pivot } });
     }
 
     for (const id of d.fire) {
@@ -427,6 +452,7 @@ export class Simulation {
 
     let hires = 0;
     const welcomed: string[] = [];
+    const hiredPeople: { name: string; role: Role; level: number; salary: number }[] = [];
     for (const role of d.hire) {
       if (hires >= MAX_HIRES_PER_WEEK || active(c).length >= MAX_HEADCOUNT) break;
       if (role === 'ceo' || !HIREABLE_ROLES.includes(role)) continue;
@@ -444,10 +470,13 @@ export class Simulation {
       hires += 1;
       const title = `${level === 3 ? 'Senior ' : level === 1 ? 'Junior ' : ''}${ROLE_LABEL[role]}`;
       welcomed.push(`${e.name} (${title}, ${fmtTokens(e.salary)}/wk)`);
+      hiredPeople.push({ name: e.name, role, level, salary: e.salary });
     }
     if (welcomed.length) {
       const text = welcomed.length === 1 ? `👋 Welcome ${welcomed[0]}!` : `👋 Welcome to our ${welcomed.length} new hires: ${welcomed.join(', ')}!`;
-      this.emit('hire', c, 'hr', text, 1, ceo?.name ?? c.ceoName, 'ceo', { count: welcomed.length });
+      this.emit('hire', c, 'hr', text, 1, ceo?.name ?? c.ceoName, 'ceo', { count: welcomed.length, people: hiredPeople }, welcomed.length === 1
+        ? { key: 'ev.hireOne', params: { name: hiredPeople[0].name, role: hiredPeople[0].role, level: hiredPeople[0].level, salary: hiredPeople[0].salary } }
+        : { key: 'ev.hireMany', params: { count: hiredPeople.length, names: hiredPeople.map((h) => h.name).join(', ') } });
     }
   }
 
@@ -458,10 +487,11 @@ export class Simulation {
       if (s) s.fees += e.salary * 2; // severance
       for (const o of active(c)) o.morale = clamp(o.morale - 0.02, 0, 1);
       const perf = e.performance < 0.75 ? ` Last review: ${e.performance.toFixed(2)}.` : '';
-      this.emit('fire', c, 'hr', `🔥 ${e.name} (${ROLE_LABEL[e.role]}) has been let go.${perf}`, 2, this.ceo(c)?.name ?? c.ceoName, 'ceo', { role: e.role });
+      this.emit('fire', c, 'hr', `🔥 ${e.name} (${ROLE_LABEL[e.role]}) has been let go.${perf}`, 2, this.ceo(c)?.name ?? c.ceoName, 'ceo', { role: e.role }, { key: 'ev.fire', params: { name: e.name, role: e.role } });
     } else {
       for (const o of active(c)) o.morale = clamp(o.morale - 0.015, 0, 1);
-      this.emit('quit', c, 'hr', `🚪 ${e.name} (${ROLE_LABEL[e.role]}) resigned — "${reason ?? pick(this.rngFor(c), QUIT_REASONS)}".`, 2, e.name, e.role);
+      const why2 = reason ?? pick(this.rngFor(c), QUIT_REASONS);
+      this.emit('quit', c, 'hr', `🚪 ${e.name} (${ROLE_LABEL[e.role]}) resigned — "${why2}".`, 2, e.name, e.role, undefined, { key: 'ev.quit', params: { name: e.name, role: e.role, reason: why2 } });
     }
     if (e.role === 'cto' && why !== 'fired') {
       this.emit('chat', c, 'eng', 'wait, who has the prod credentials now?', 1, pick(this.rngFor(c), active(c).filter((x) => x.role === 'engineer').map((x) => x.name).concat([c.ceoName])), 'engineer');
@@ -519,10 +549,10 @@ export class Simulation {
         this.bountyEffect(c, opt.role, s);
         const channel: Channel = opt.role === 'sales' ? 'deals' : opt.role === 'engineer' || opt.role === 'cto' ? 'eng' : 'general';
         const kind: EventKind = opt.role === 'engineer' && c.focus === 'build' ? 'ship' : 'bounty';
-        this.emit(kind, c, channel, `${kind === 'ship' ? '🚢 Shipped' : '✅ Done'}: "${title}" — ${best.e.name} won the bounty at ${fmtTokens(best.ask)} (${candidates.length} bid${candidates.length > 1 ? 's' : ''}).`, kind === 'ship' ? 2 : 1, best.e.name, best.e.role);
+        this.emit(kind, c, channel, `${kind === 'ship' ? '🚢 Shipped' : '✅ Done'}: "${title}" — ${best.e.name} won the bounty at ${fmtTokens(best.ask)} (${candidates.length} bid${candidates.length > 1 ? 's' : ''}).`, kind === 'ship' ? 2 : 1, best.e.name, best.e.role, undefined, { key: kind === 'ship' ? 'ev.ship' : 'ev.bountyDone', params: { title, name: best.e.name, ask: best.ask, bids: candidates.length } });
       } else {
         best.e.performance = clamp(best.e.performance - 0.05, 0, 1.6);
-        this.emit('bounty', c, opt.role === 'sales' ? 'deals' : 'eng', `❌ "${title}" slipped. ${best.e.name} missed the deadline; bounty unpaid.`, 1, best.e.name, best.e.role);
+        this.emit('bounty', c, opt.role === 'sales' ? 'deals' : 'eng', `❌ "${title}" slipped. ${best.e.name} missed the deadline; bounty unpaid.`, 1, best.e.name, best.e.role, undefined, { key: 'ev.bountyFail', params: { title, name: best.e.name } });
       }
     }
   }
@@ -643,7 +673,7 @@ export class Simulation {
     const last = c.history[c.history.length - 1];
     if (last && runwayWeeks(c.cash, last.burn) > 120) {
       c.lastRaiseWeek = this.week - 4;
-      this.emit('raise_rejected', c, 'deals', `🙅 ${vc} passed: "you have ${fmtTokens(c.cash)} in the bank — come back when you need it".`, 1, vc, 'investor', { stage: stage.name });
+      this.emit('raise_rejected', c, 'deals', `🙅 ${vc} passed: "you have ${fmtTokens(c.cash)} in the bank — come back when you need it".`, 1, vc, 'investor', { stage: stage.name }, { key: 'ev.rejectedRich', params: { vc, cash: c.cash } });
       return;
     }
     if (rng() < score) {
@@ -659,10 +689,11 @@ export class Simulation {
       c.rounds.push({ name: stage.name, week: this.week, amount, preMoney, investor: vc });
       c.valuation = preMoney + amount;
       for (const e of active(c)) e.morale = clamp(e.morale + 0.08, 0, 1);
-      this.emit('raise', c, 'deals', `💰 ${c.name} raised a ${fmtTokens(amount)} ${stage.name} led by ${vc} at a ${fmtTokens(preMoney)} pre-money valuation.`, 3, vc, 'investor', { amount, preMoney, stage: stage.name });
+      this.emit('raise', c, 'deals', `💰 ${c.name} raised a ${fmtTokens(amount)} ${stage.name} led by ${vc} at a ${fmtTokens(preMoney)} pre-money valuation.`, 3, vc, 'investor', { amount, preMoney, stage: stage.name }, { key: 'ev.raise', params: { name: c.name, amount, stage: stage.name, vc, pre: preMoney } });
     } else {
       c.lastRaiseWeek = this.week - 6; // can try again in 4 weeks
-      this.emit('raise_rejected', c, 'deals', `🙅 ${vc} passed on the ${stage.name}: "${pick(rng, REJECTIONS)}".`, 2, vc, 'investor', { stage: stage.name });
+      const why = pick(rng, REJECTIONS);
+      this.emit('raise_rejected', c, 'deals', `🙅 ${vc} passed on the ${stage.name}: "${why}".`, 2, vc, 'investor', { stage: stage.name }, { key: 'ev.rejected', params: { vc, stage: stage.name, reason: why } });
     }
   }
 
@@ -710,7 +741,7 @@ export class Simulation {
     const top = sorted[0];
     const bottom = sorted[sorted.length - 1];
     const low = sorted.filter((e) => e.performance < 0.7).length;
-    this.emit('review', c, 'hr', `📋 Performance reviews: ⭐ ${top.name} (${top.performance.toFixed(2)}) leads; ${bottom.name} is lowest (${bottom.performance.toFixed(2)}). ${low} on a performance plan.`, 1, 'People Ops', 'system');
+    this.emit('review', c, 'hr', `📋 Performance reviews: ⭐ ${top.name} (${top.performance.toFixed(2)}) leads; ${bottom.name} is lowest (${bottom.performance.toFixed(2)}). ${low} on a performance plan.`, 1, 'People Ops', 'system', undefined, { key: 'ev.review', params: { top: top.name, topPerf: +top.performance.toFixed(2), bottom: bottom.name, bottomPerf: +bottom.performance.toFixed(2), low } });
   }
 
   private boardMeeting(c: Company): void {
@@ -720,9 +751,10 @@ export class Simulation {
     const prevQ = c.history[c.history.length - 14];
     const qoq = prevQ && prevQ.revenue > 0 ? last.revenue / prevQ.revenue - 1 : 0;
     const runway = last.runwayWeeks;
-    const mood = runway < 16 ? '😬' : qoq > 0.3 ? '🤩' : qoq > 0.05 ? '🙂' : '😐';
+    const moodKey = runway < 16 ? 'tense' : qoq > 0.3 ? 'thrilled' : qoq > 0.05 ? 'pleased' : 'flat';
+    const mood = moodKey;
     const q = Math.ceil(this.week / 13);
-    this.emit('board', c, 'board', `🏛️ Q${q} board meeting — ARR ${fmtTokens(last.revenue * 52)} (${qoq >= 0 ? '+' : ''}${Math.round(qoq * 100)}% QoQ), ${last.customers.toLocaleString('en-US')} customers, runway ${runway >= 999 ? '∞ (profitable)' : `${runway} wks`}. Board mood: ${mood}`, 2, 'The Board', 'board');
+    this.emit('board', c, 'board', `🏛️ Q${q} board meeting — ARR ${fmtTokens(last.revenue * 52)} (${qoq >= 0 ? '+' : ''}${Math.round(qoq * 100)}% QoQ), ${last.customers.toLocaleString('en-US')} customers, runway ${runway >= 999 ? '∞ (profitable)' : `${runway} wks`}. Board mood: ${mood}`, 2, 'The Board', 'board', undefined, { key: 'ev.board', params: { q, arr: last.revenue * 52, qoq: Math.round(qoq * 100), customers: last.customers, runway, mood: moodKey } });
 
     const outsiders = c.rounds.length > 1;
     if (!outsiders) return;
@@ -741,7 +773,7 @@ export class Simulation {
       c.marketingBudget = Math.round(c.marketingBudget * 0.5);
       for (const e of active(c)) e.morale = clamp(e.morale - 0.12, 0, 1);
       if (names.length) {
-        this.emit('board', c, 'board', `✂️ The board mandates a burn cut. ${names.length} people laid off (${names.slice(0, 4).join(', ')}${names.length > 4 ? '…' : ''}); marketing halved.`, 3, 'The Board', 'board', { laidOff: names.length });
+        this.emit('board', c, 'board', `✂️ The board mandates a burn cut. ${names.length} people laid off (${names.slice(0, 4).join(', ')}${names.length > 4 ? '…' : ''}); marketing halved.`, 3, 'The Board', 'board', { laidOff: names.length }, { key: 'ev.burnCut', params: { count: names.length, names: names.slice(0, 4).join(', ') } });
       }
     }
     const peak = this.peakValuation.get(c.id) ?? c.valuation;
@@ -754,7 +786,7 @@ export class Simulation {
         c.employees.push(fresh);
         c.ceoName = fresh.name;
         this.peakValuation.set(c.id, c.valuation);
-        this.emit('ceo_ousted', c, 'board', `🪓 Board ousts CEO ${old.name} after valuation fell ${Math.round((1 - c.valuation / peak) * 100)}% from peak. ${fresh.name} takes over (same ${c.brainLabel} brain, new face).`, 3, 'The Board', 'board');
+        this.emit('ceo_ousted', c, 'board', `🪓 Board ousts CEO ${old.name} after valuation fell ${Math.round((1 - c.valuation / peak) * 100)}% from peak. ${fresh.name} takes over (same ${c.brainLabel} brain, new face).`, 3, 'The Board', 'board', undefined, { key: 'ev.ceoOusted', params: { old: old.name, drop: Math.round((1 - c.valuation / peak) * 100), fresh: fresh.name, brain: c.brainLabel } });
       }
     }
   }
@@ -777,7 +809,7 @@ export class Simulation {
       c.rounds.push({ name: 'Bridge', week: this.week, amount, preMoney, investor: vc });
       c.cash += amount;
       c.valuation = preMoney + amount;
-      this.emit('bridge', c, 'deals', `🩹 Out of cash — ${vc} wires a ${fmtTokens(amount)} emergency bridge at a brutal ${fmtTokens(preMoney)} valuation. Founders diluted.`, 3, vc, 'investor');
+      this.emit('bridge', c, 'deals', `🩹 Out of cash — ${vc} wires a ${fmtTokens(amount)} emergency bridge at a brutal ${fmtTokens(preMoney)} valuation. Founders diluted.`, 3, vc, 'investor', undefined, { key: 'ev.bridge', params: { vc, amount, pre: preMoney } });
       return;
     }
     c.status = 'bankrupt';
@@ -788,7 +820,7 @@ export class Simulation {
     c.valuation = 0;
     const s = c.history[c.history.length - 1];
     if (s) { s.headcount = 0; s.customers = 0; s.valuation = 0; }
-    this.emit('bankrupt', c, 'general', `💀 ${c.name} has run out of money and shut down in week ${this.week}. "It was an incredible journey."`, 3, c.ceoName, 'ceo');
+    this.emit('bankrupt', c, 'general', `💀 ${c.name} has run out of money and shut down in week ${this.week}. "It was an incredible journey."`, 3, c.ceoName, 'ceo', undefined, { key: 'ev.bankrupt', params: { name: c.name, week: this.week } });
   }
 
   private updateValuation(c: Company): void {
@@ -802,28 +834,30 @@ export class Simulation {
       c.status = 'unicorn';
       c.statusWeek = this.week;
       const first = !this.companies.some((x) => x.id !== c.id && x.status === 'unicorn');
-      this.emit('unicorn', c, 'general', `🦄 ${c.name} is a UNICORN — valued at ${fmtTokens(c.valuation)} in week ${this.week}${first ? ', the first in the league' : ''}!`, 3, 'Market wire', 'market');
+      this.emit('unicorn', c, 'general', `🦄 ${c.name} is a UNICORN — valued at ${fmtTokens(c.valuation)} in week ${this.week}${first ? ', the first in the league' : ''}!`, 3, 'Market wire', 'market', undefined, { key: first ? 'ev.unicornFirst' : 'ev.unicorn', params: { name: c.name, valuation: c.valuation, week: this.week } });
     }
   }
 
   private milestoneCheck(c: Company): void {
     if (c.status === 'bankrupt') return;
     const seen = this.milestones.get(c.id)!;
-    const marks: [string, boolean, string][] = [
-      ['cust-100', c.customers >= 100, `🎯 ${c.name} hits 100 customers`],
-      ['cust-1k', c.customers >= 1_000, `🎯 ${c.name} hits 1,000 customers`],
-      ['cust-10k', c.customers >= 10_000, `🎯 ${c.name} hits 10,000 customers`],
-      ['cust-100k', c.customers >= 100_000, `🎯 ${c.name} hits 100,000 customers`],
-      ['cust-1m', c.customers >= 1_000_000, `🎯 ${c.name} hits 1,000,000 customers`],
-      ['arr-1m', c.revenue * 52 >= 1e6, `📈 ${c.name} crosses ${fmtTokens(1e6)} ARR`],
-      ['arr-10m', c.revenue * 52 >= 1e7, `📈 ${c.name} crosses ${fmtTokens(1e7)} ARR`],
-      ['arr-100m', c.revenue * 52 >= 1e8, `📈 ${c.name} crosses ${fmtTokens(1e8)} ARR`],
-      ['profit', c.history.length > 4 && c.history.slice(-4).every((h) => h.burn < 0), `💚 ${c.name} is profitable — default alive`],
+    const N = (n: number) => ({ key: 'ev.milestoneCustomers', params: { name: c.name, n } });
+    const A = (n: number) => ({ key: 'ev.milestoneArr', params: { name: c.name, amount: n } });
+    const marks: [string, boolean, string, SimEvent['msg']?][] = [
+      ['cust-100', c.customers >= 100, `🎯 ${c.name} hits 100 customers`, N(100)],
+      ['cust-1k', c.customers >= 1_000, `🎯 ${c.name} hits 1,000 customers`, N(1_000)],
+      ['cust-10k', c.customers >= 10_000, `🎯 ${c.name} hits 10,000 customers`, N(10_000)],
+      ['cust-100k', c.customers >= 100_000, `🎯 ${c.name} hits 100,000 customers`, N(100_000)],
+      ['cust-1m', c.customers >= 1_000_000, `🎯 ${c.name} hits 1,000,000 customers`, N(1_000_000)],
+      ['arr-1m', c.revenue * 52 >= 1e6, `📈 ${c.name} crosses ${fmtTokens(1e6)} ARR`, A(1e6)],
+      ['arr-10m', c.revenue * 52 >= 1e7, `📈 ${c.name} crosses ${fmtTokens(1e7)} ARR`, A(1e7)],
+      ['arr-100m', c.revenue * 52 >= 1e8, `📈 ${c.name} crosses ${fmtTokens(1e8)} ARR`, A(1e8)],
+      ['profit', c.history.length > 4 && c.history.slice(-4).every((h) => h.burn < 0), `💚 ${c.name} is profitable — default alive`, { key: 'ev.milestoneProfit', params: { name: c.name } }],
     ];
-    for (const [key, hit, text] of marks) {
+    for (const [key, hit, text, msg] of marks) {
       if (hit && !seen.has(key)) {
         seen.add(key);
-        this.emit('milestone', c, 'general', text, 2, 'Market wire', 'market');
+        this.emit('milestone', c, 'general', text, 2, 'Market wire', 'market', undefined, msg);
       }
     }
   }
@@ -836,30 +870,30 @@ export class Simulation {
       switch (kind) {
         case 'funding-freeze':
           this.market.climate = clamp(this.market.climate * 0.5, 0.25, 1.9);
-          this.emit('shock', undefined, 'market', '🥶 SHOCK: funding freeze — investors stop writing checks overnight.', 3, 'Market wire', 'market');
+          this.emit('shock', undefined, 'market', '🥶 SHOCK: funding freeze — investors stop writing checks overnight.', 3, 'Market wire', 'market', undefined, { key: 'ev.shockFreeze' });
           break;
         case 'mania':
           this.market.climate = clamp(this.market.climate * 1.5, 0.25, 1.9);
-          this.emit('shock', undefined, 'market', '🚀 SHOCK: VC mania — term sheets are flying.', 3, 'Market wire', 'market');
+          this.emit('shock', undefined, 'market', '🚀 SHOCK: VC mania — term sheets are flying.', 3, 'Market wire', 'market', undefined, { key: 'ev.shockMania' });
           break;
         case 'recession':
           for (const s of SEGMENT_LIST) this.market.demand[s] = clamp(this.market.demand[s] * 0.8, 0.4, 1.8);
           this.market.churnMult = clamp(this.market.churnMult * 1.3, 0.6, 2);
-          this.emit('shock', undefined, 'market', '📉 SHOCK: recession — customers cut budgets, churn spikes.', 3, 'Market wire', 'market');
+          this.emit('shock', undefined, 'market', '📉 SHOCK: recession — customers cut budgets, churn spikes.', 3, 'Market wire', 'market', undefined, { key: 'ev.shockRecession' });
           break;
         case 'viral':
           if (target) {
             target.product.brand = clamp(target.product.brand + 30, 0, 100);
             const seg = SEGMENTS[target.product.segment];
             target.customers += Math.round(seg.tam * 0.01 * (0.5 + target.product.quality / 100));
-            this.emit('shock', target, 'general', `🔥 ${target.name} goes viral! A celebrity posted about it; signups explode.`, 3, 'Market wire', 'market');
+            this.emit('shock', target, 'general', `🔥 ${target.name} goes viral! A celebrity posted about it; signups explode.`, 3, 'Market wire', 'market', undefined, { key: 'ev.shockViral', params: { name: target.name } });
           }
           break;
         case 'outage':
           if (target) {
             target.product.quality = clamp(target.product.quality - 15, 1, 100);
             target.customers = Math.round(target.customers * 0.9);
-            this.emit('shock', target, 'eng', `💥 ${target.name} suffers a 14-hour outage. Customers are furious; 10% leave.`, 3, 'Status page', 'system');
+            this.emit('shock', target, 'eng', `💥 ${target.name} suffers a 14-hour outage. Customers are furious; 10% leave.`, 3, 'Status page', 'system', undefined, { key: 'ev.shockOutage', params: { name: target.name } });
           }
           break;
         case 'poach':
@@ -889,8 +923,9 @@ export class Simulation {
   }
 
   private emit(kind: EventKind, c: Company | undefined, channel: Channel, text: string, importance: 1 | 2 | 3,
-    author?: string, authorRole?: SimEvent['authorRole'], data?: Record<string, unknown>): void {
-    const ev: SimEvent = { id: this.nextEventId++, week: this.week, companyId: c?.id, kind, channel, text, importance };
+    author?: string, authorRole?: SimEvent['authorRole'], data?: Record<string, unknown>, msg?: SimEvent['msg']): void {
+    const ev: SimEvent = { id: this.nextEventId++, week: this.week, companyId: c?.id, kind, channel, text: stripEmoji(text), importance };
+    if (msg) ev.msg = msg;
     if (author) ev.author = author;
     if (authorRole) ev.authorRole = authorRole;
     if (data) ev.data = data;
@@ -958,6 +993,10 @@ export function sanitize(d: Partial<Decision> | undefined, c: Company): Decision
 }
 
 function headroom(q: number): number { return Math.pow(Math.max(0, 1 - q / 100), 1.5); }
+/** Event text is plain prose: strip pictographic emoji so terminals and the UI stay clean. */
+export function stripEmoji(s: string): string {
+  return s.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/gu, '').replace(/\s{2,}/g, ' ').trim();
+}
 function round2(x: number): number { return Math.round(x * 100) / 100; }
 function round3(x: number): number { return Math.round(x * 1000) / 1000; }
 function fmtPrice(p: number): string { return p >= 100 ? fmtTokens(p) : `◈${p.toFixed(2)}`; }
