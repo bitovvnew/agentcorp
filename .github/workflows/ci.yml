@@ -26,6 +26,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run check:locales
       - run: npm test
+      - run: node scripts/smoke-onboarding.mjs
       - name: Smoke test the CLI
         run: |
           node bin/agentcorp.js --version

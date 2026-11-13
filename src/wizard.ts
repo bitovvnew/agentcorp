@@ -3,7 +3,7 @@ import readline from 'node:readline';
 import { PERSONALITIES } from './brains/index.js';
 import { loadConfig, saveConfig, applyConfig, configPath, type AgentCorpConfig } from './config.js';
 import { listScenarios, listTemplates } from './plugins/index.js';
-import { PROVIDERS, discover, envKey, probe, type ModelInfo, type ProviderId } from './providers.js';
+import { PROVIDERS, discover, envKey, probe, pickFreeBrains, type ModelInfo, type ProviderId } from './providers.js';
 import { maskKey } from './security.js';
 import { detectLang, LANGS, translator } from './i18n.js';
 import type { CompanySpec } from './types.js';
@@ -42,7 +42,7 @@ function pickFrom<T>(items: T[], answer: string, fallback: T): T {
   return Number.isInteger(n) && n >= 1 && n <= items.length ? items[n - 1] : fallback;
 }
 
-export async function runWizard(langArg?: string): Promise<AgentCorpConfig> {
+export async function runWizard(langArg?: string, opts: { free?: boolean } = {}): Promise<AgentCorpConfig> {
   const p = new Prompt();
   try {
     const prev = loadConfig() ?? { version: 1 as const, keys: {} };
@@ -92,13 +92,21 @@ export async function runWizard(langArg?: string): Promise<AgentCorpConfig> {
     console.log(`\n${b('3/4')} ${t('cli.wizard.league')}`);
     const options: { spec: string; label: string }[] = [];
     for (const [prov, list] of Object.entries(models) as [ProviderId, ModelInfo[]][]) {
-      for (const m of list) options.push({ spec: `${prov}:${m.id}`, label: `${prov}:${m.id}` });
+      for (const m of list) options.push({ spec: `${prov}:${m.id}`, label: `${prov}:${m.id}${m.free ? `  [${t('setup.freeBadge')}]` : ''}` });
     }
     for (const x of Object.values(PERSONALITIES)) options.push({ spec: x.id, label: `${t('cli.wizard.offline')}: ${x.label}` });
     const size = Math.max(2, Math.min(8, Number(await p.ask(`  ${t('cli.wizard.howMany')}`, '4')) || 4));
     const companies: CompanySpec[] = [];
+    const free = pickFreeBrains(models, size);
+    const goFree = (opts.free || free.length > 0) && (opts.free || (await p.ask(`  ${t('cli.wizard.free', { n: free.length })}`, free.length ? 'y' : 'n')).toLowerCase().startsWith('y'));
+    if (goFree) {
+      if (!free.length) console.log(`  ${acc(t('setup.freeNone'))}`);
+      const offline = Object.keys(PERSONALITIES);
+      for (let i = 0; i < size; i++) companies.push({ brain: free[i] ?? offline[i % offline.length], template: 'saas' });
+      console.log(companies.map((c, k) => `    ${dim(String(k + 1))}) ${c.brain}`).join('\n'));
+    }
     const filterable = options.length > 30;
-    for (let i = 0; i < size; i++) {
+    for (let i = companies.length; i < size; i++) {
       let pool = options;
       if (filterable) {
         const f = await p.ask(`  ${t('cli.wizard.filter', { n: i + 1 })}`, '');

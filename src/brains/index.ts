@@ -6,7 +6,7 @@ export { HeuristicBrain, PERSONALITIES, decideHeuristic } from './heuristic.js';
 export { LlmBrain } from './llm.js';
 export { SYSTEM_PROMPT, DECISION_SCHEMA, parseDecision, userPrompt } from './prompt.js';
 
-const PROVIDERS: Provider[] = ['openai', 'anthropic', 'gemini', 'ollama', 'openrouter', 'openai-compatible'];
+const PROVIDERS: Provider[] = ['openai', 'anthropic', 'gemini', 'ollama', 'openrouter', 'groq', 'openai-compatible'];
 
 /**
  * Brain spec strings:
@@ -46,7 +46,8 @@ export function listBrains(): { spec: string; label: string; description: string
     { spec: 'openai:<model>', label: 'OpenAI', description: 'OpenAI Chat Completions. Needs OPENAI_API_KEY.' },
     { spec: 'gemini:<model>', label: 'Gemini', description: 'Google Gemini API. Needs GEMINI_API_KEY.' },
     { spec: 'ollama:<model>', label: 'Ollama', description: 'Local models via Ollama. No key.' },
-    { spec: 'openrouter:<model>', label: 'OpenRouter', description: 'Hundreds of models through one key. Needs OPENROUTER_API_KEY.' },
+    { spec: 'openrouter:<model>', label: 'OpenRouter', description: 'Hundreds of models through one key, many free. Needs OPENROUTER_API_KEY.' },
+    { spec: 'groq:<model>', label: 'Groq', description: 'Fast open models with a free tier. Needs GROQ_API_KEY.' },
     { spec: 'openai-compatible:<model>', label: 'Any OpenAI-compatible API', description: 'OpenRouter, vLLM, LM Studio… Set AGENTCORP_BASE_URL and AGENTCORP_API_KEY.' },
   ];
 }

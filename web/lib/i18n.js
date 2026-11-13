@@ -1,8 +1,8 @@
 // Tiny i18n: locale JSON dictionaries, ICU-lite placeholders, number/money formatting per language.
 // Shared by the dashboard (browser) and the CLI (Node). No imports, so it works from a data: URL.
 
-export const LANGS = ['en', 'ru', 'kk', 'fr'];
-const INTL = { en: 'en-US', ru: 'ru-RU', kk: 'kk-KZ', fr: 'fr-FR' };
+export const LANGS = ['en', 'ru', 'kk', 'fr', 'zh', 'ko', 'es', 'ja'];
+const INTL = { en: 'en-US', ru: 'ru-RU', kk: 'kk-KZ', fr: 'fr-FR', zh: 'zh-CN', ko: 'ko-KR', es: 'es-ES', ja: 'ja-JP' };
 
 export function detectLang(saved) {
   const list = [saved, ...(typeof navigator !== 'undefined' ? navigator.languages || [navigator.language] : [])];

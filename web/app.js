@@ -15,7 +15,7 @@ const C = {
   grid: cssVar('--rule'), rule2: cssVar('--rule2'), good: cssVar('--good'), warning: cssVar('--warning'), critical: cssVar('--critical'),
 };
 const COLORS = Array.from({ length: 8 }, (_, i) => cssVar(`--series-${i + 1}`));
-const LANG_NAMES = { en: 'English', ru: 'Русский', kk: 'Қазақша', fr: 'Français' };
+const LANG_NAMES = { en: 'English', ru: 'Русский', kk: 'Қазақша', fr: 'Français', zh: '简体中文', ko: '한국어', es: 'Español', ja: '日本語' };
 const CHANNELS = ['general', 'eng', 'deals', 'sales', 'hr', 'board', 'market'];
 const MOMENT_KINDS = new Set(['raise', 'bridge', 'bankrupt', 'unicorn', 'pivot', 'ceo_ousted', 'shock']);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

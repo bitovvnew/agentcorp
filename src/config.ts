@@ -28,6 +28,7 @@ const ENV_FOR = {
   anthropic: 'ANTHROPIC_API_KEY',
   gemini: 'GEMINI_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
+  groq: 'GROQ_API_KEY',
 } as const;
 const managedEnv = new Map<string, string>();
 

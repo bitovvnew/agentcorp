@@ -5,7 +5,7 @@ import { DECISION_SCHEMA, SYSTEM_PROMPT, parseDecision, userPrompt } from './pro
 import { limiterFor, redact, registerSecret } from '../security.js';
 import { ollamaBase } from '../providers.js';
 
-export type Provider = 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'openrouter' | 'openai-compatible';
+export type Provider = 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'openrouter' | 'groq' | 'openai-compatible';
 
 export interface LlmOptions {
   provider: Provider;
@@ -69,6 +69,7 @@ function makeCall(o: LlmOptions): Call {
     case 'anthropic': return anthropicCall(o);
     case 'gemini': return geminiCall(o);
     case 'ollama': return openAiCompatibleCall({ ...o, baseURL: `${ollamaBase(o.baseURL)}/v1`, apiKey: o.apiKey ?? 'ollama' });
+    case 'groq': return openAiCompatibleCall({ ...o, baseURL: o.baseURL ?? 'https://api.groq.com/openai/v1', apiKey: o.apiKey ?? process.env.GROQ_API_KEY });
     case 'openrouter': return openAiCompatibleCall({ ...o, baseURL: o.baseURL ?? 'https://openrouter.ai/api/v1', apiKey: o.apiKey ?? process.env.OPENROUTER_API_KEY });
     case 'openai': return openAiCompatibleCall({ ...o, baseURL: o.baseURL ?? process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1', apiKey: o.apiKey ?? process.env.OPENAI_API_KEY });
     case 'openai-compatible': return openAiCompatibleCall({ ...o, baseURL: o.baseURL ?? process.env.AGENTCORP_BASE_URL, apiKey: o.apiKey ?? process.env.AGENTCORP_API_KEY });
@@ -79,7 +80,7 @@ function makeCall(o: LlmOptions): Call {
 /** OpenAI Chat Completions — also used for Ollama and any OpenAI-compatible server. */
 function openAiCompatibleCall(o: LlmOptions): Call {
   if (!o.baseURL) throw new Error(`${o.provider}: set a base URL (AGENTCORP_BASE_URL)`);
-  if (!o.apiKey) throw new Error(`${o.provider}: missing API key (set ${o.provider === 'openai' ? 'OPENAI_API_KEY' : o.provider === 'openrouter' ? 'OPENROUTER_API_KEY' : 'AGENTCORP_API_KEY'}, or run agentcorp setup)`);
+  if (!o.apiKey) throw new Error(`${o.provider}: missing API key (set ${o.provider === 'openai' ? 'OPENAI_API_KEY' : o.provider === 'openrouter' ? 'OPENROUTER_API_KEY' : o.provider === 'groq' ? 'GROQ_API_KEY' : 'AGENTCORP_API_KEY'}, or run agentcorp setup)`);
   registerSecret(o.apiKey);
   const url = `${o.baseURL.replace(/\/$/, '')}/chat/completions`;
   return async (system, user, signal) => {

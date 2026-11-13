@@ -29,6 +29,19 @@ export async function mountOnboarding(root, { t, icon, langs, langName, lang, on
   };
 
   const offlineRows = () => info.personalities.map((p) => ({ brain: p.id, template: 'saas', name: '' }));
+  // Same policy as the CLI: spread free models across providers (local first), fill the rest offline.
+  const freeBrains = (n = 4) => {
+    const order = ['ollama', 'groq', 'gemini', 'openrouter'];
+    const queues = order.map((p) => (st.models[p] || []).filter((m) => m.free).map((m) => `${p}:${m.id}`));
+    const out = [];
+    while (out.length < n && queues.some((q) => q.length)) for (const q of queues) { const x = q.shift(); if (x && out.length < n) out.push(x); }
+    return out;
+  };
+  const freeRows = () => {
+    const picks = freeBrains(Math.max(4, st.rows.length || 4));
+    const offline = info.personalities.map((p) => p.id);
+    return picks.length ? Array.from({ length: Math.max(4, picks.length) }, (_, i) => ({ brain: picks[i] ?? offline[i % offline.length], template: 'saas', name: '' })) : null;
+  };
 
   function providerCard(p) {
     const s = st.status[p.id];
@@ -54,7 +67,7 @@ export async function mountOnboarding(root, { t, icon, langs, langName, lang, on
       if (!list.length) continue;
       html += `<optgroup label="${esc(p.label)}">${list.slice(0, 400).map((m) => {
         const v = `${p.id}:${m.id}`;
-        return `<option value="${esc(v)}"${v === selected ? ' selected' : ''}>${esc(m.label)}</option>`;
+        return `<option value="${esc(v)}"${v === selected ? ' selected' : ''}>${esc(m.label)}${m.free ? ` · ${esc(t('setup.freeBadge'))}` : ''}</option>`;
       }).join('')}</optgroup>`;
     }
     html += `<optgroup label="${esc(t('setup.offlineGroup'))}">${info.personalities.map((p) => `<option value="${p.id}"${p.id === selected ? ' selected' : ''}>${esc(t('setup.offlineLabel', { name: t(`brain.${p.id}`) }))}</option>`).join('')}</optgroup>`;
@@ -85,8 +98,10 @@ export async function mountOnboarding(root, { t, icon, langs, langName, lang, on
         <div class="league-tools">
           <input type="search" id="ob-filter" placeholder="${esc(t('setup.filter'))}" value="${esc(st.filter)}">
           <button class="btn" id="ob-add">${esc(t('setup.addCompany'))}</button>
+          <button class="btn primary" id="ob-free">${icon('check')} ${esc(t('setup.free'))}</button>
           <button class="btn ghost" id="ob-offline">${icon('cpu')} ${esc(t('setup.useOffline'))}</button>
         </div>
+        <p class="note small">${esc(st.freeMsg || t('setup.freeNote'))}</p>
         <table class="rows"><thead><tr><th>#</th><th>${esc(t('setup.ceo'))}</th><th>${esc(t('setup.template'))}</th><th>${esc(t('setup.name'))}</th><th></th></tr></thead><tbody>
         ${st.rows.map((r, i) => `<tr>
           <td class="n">${String(i + 1).padStart(2, '0')}</td>
@@ -136,6 +151,7 @@ export async function mountOnboarding(root, { t, icon, langs, langName, lang, on
     render();
     try {
       const r = await api('/api/setup/models', { provider: p, key, baseURL: p === 'ollama' ? st.ollamaURL || undefined : undefined });
+      collect();
       if (r.ok) {
         st.checkedKeys[p] = key;
         st.models[p] = r.models;
@@ -151,18 +167,27 @@ export async function mountOnboarding(root, { t, icon, langs, langName, lang, on
         st.status[p] = { ok: false, text: r.error || t('setup.invalid') };
       }
     } catch (err) {
+      collect();
       st.status[p] = { ok: false, text: err.message };
     }
-    collect();
     render();
   }
 
   function bind() {
     root.querySelector('#ob-lang').addEventListener('change', (e) => { collect(); onLang(e.target.value); });
     root.querySelectorAll('[data-check]').forEach((b) => b.addEventListener('click', () => check(b.dataset.check)));
-    root.querySelectorAll('[data-key]').forEach((el) => el.addEventListener('keydown', (e) => { if (e.key === 'Enter') check(el.dataset.key); }));
+    root.querySelectorAll('[data-key]').forEach((el) => {
+      el.addEventListener('keydown', (e) => { if (e.key === 'Enter') check(el.dataset.key); });
+      el.addEventListener('paste', () => setTimeout(() => { if (el.isConnected && el.value.trim()) check(el.dataset.key); }, 0));
+    });
     root.querySelector('#ob-filter').addEventListener('change', (e) => { collect(); st.filter = e.target.value; render(); });
     root.querySelector('#ob-add').addEventListener('click', () => { collect(); if (st.rows.length < 8) st.rows.push({ brain: st.rows[st.rows.length - 1]?.brain || 'balanced', template: 'saas', name: '' }); render(); });
+    root.querySelector('#ob-free').addEventListener('click', () => {
+      collect();
+      const rows = freeRows();
+      if (rows) { st.rows = rows; st.freeMsg = ''; } else st.freeMsg = t('setup.freeNone');
+      render();
+    });
     root.querySelector('#ob-offline').addEventListener('click', () => { collect(); st.rows = offlineRows(); render(); });
     root.querySelector('#ob-scenario').addEventListener('change', () => { collect(); render(); });
     root.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => { collect(); if (st.rows.length > 2) st.rows.splice(+b.dataset.del, 1); render(); }));

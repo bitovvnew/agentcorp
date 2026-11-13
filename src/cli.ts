@@ -17,7 +17,7 @@ import { PROVIDERS, probe, type ProviderId } from './providers.js';
 import { runWizard } from './wizard.js';
 import { runSeason } from './season.js';
 import { seasonHtml } from './season-html.js';
-import { detectLang } from './i18n.js';
+import { detectLang, LANGS } from './i18n.js';
 
 const tty = process.stdout.isTTY && !process.env.NO_COLOR;
 const c = {
@@ -34,12 +34,12 @@ const HELP = `
 ${c.bold('AgentCorp')} ${c.dim(`v${VERSION}`)} — AI startup simulator. Which LLM runs the best company?
 
 ${c.bold('Usage')}
-  agentcorp                              Run your saved league or the keyless demo
+  agentcorp                              Open first-run setup, or run your saved league
   agentcorp setup [--web]                Pick providers, paste keys (checked live), pick models, save locally
-  agentcorp models <provider>            List the models a provider offers you (openai, anthropic, gemini, openrouter, ollama)
+  agentcorp models <provider>            List the models a provider offers you (openai, anthropic, gemini, openrouter, groq, ollama)
   agentcorp league --brains <a,b,c,…>    Companies with different CEO brains compete in one market
   agentcorp season --brains <a,b,…>      Several races across seeds and scenarios; points decide the champion
-  agentcorp offline                      No keys: the four built-in strategy CEOs (labelled "Offline")
+  agentcorp demo                         No keys: the four built-in strategy CEOs (alias: offline)
   agentcorp run --brain <spec>           A single company
   agentcorp replay <file.json>           Open a saved replay in the dashboard
   agentcorp export <file.json> [--out f] Turn a replay into one shareable HTML file
@@ -57,7 +57,7 @@ ${c.bold('Options')}
   --max-tokens-total <n>  Spend cap for the whole league (default: 2000000)
   --token-charge <x>    Charge companies x ◈ per real LLM token their CEO spends (default: 0)
   --plugin <file.js>    Load a template or scenario plugin (repeatable)
-  --lang <code>         en, ru, kk, fr (default: auto)
+  --lang <code>         ${LANGS.join(', ')} (default: auto)
   --headless            Run in the terminal, no dashboard
   --out <file>          Save the replay (JSON), export (HTML) or pitch (MD) here
   --speed <n>           Weeks per second in the live dashboard (default: 2, 0 = max)
@@ -65,7 +65,8 @@ ${c.bold('Options')}
   --paused | --no-open
 
 ${c.bold('Brains')}
-  openai:<model>  anthropic:<model>  gemini:<model>  openrouter:<model>  ollama:<model>  openai-compatible:<model>
+  openai:<model>  anthropic:<model>  gemini:<model>  openrouter:<model>  groq:<model>  ollama:<model>  openai-compatible:<model>
+  Free: ollama (local), groq and gemini free tiers, openrouter models ending in :free  (agentcorp setup --free)
   balanced | blitzscaler | bootstrapper | visionary      offline strategy CEOs, no key, not LLMs
 
 ${c.bold('Examples')}
@@ -183,17 +184,18 @@ function leagueToConfig(l: LeagueSetup, args: Args): SimConfig {
   };
 }
 
-/** Run the saved league when available, or the keyless demo on first run. */
+/** Open browser setup on first launch; keep unattended runs headless. */
 async function startCmd(args: Args): Promise<number> {
   if (args.setup) return webSetup(args);
   const cfg = loadConfig();
-  return cfg?.league ? liveRun(leagueToConfig(cfg.league, args), args) : runCmd('offline', args);
+  if (cfg?.league) return liveRun(leagueToConfig(cfg.league, args), args);
+  return args.headless ? runCmd('offline', args) : webSetup(args);
 }
 
 async function setupCmd(args: Args): Promise<number> {
   if (args.web) return webSetup(args);
   if (!process.stdin.isTTY) { console.error('setup needs an interactive terminal; try "agentcorp setup --web"'); return 1; }
-  await runWizard(str(args, 'lang'));
+  await runWizard(str(args, 'lang'), { free: !!args.free });
   return 0;
 }
 

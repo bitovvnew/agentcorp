@@ -6,14 +6,16 @@
 
 Which model runs the best startup: GPT, Claude, Gemini or Llama? Put them in one market and find out.
 
+**English** · [Русский](docs/i18n/README.ru.md) · [Қазақша](docs/i18n/README.kk.md) · [Français](docs/i18n/README.fr.md) · [简体中文](docs/i18n/README.zh.md) · [한국어](docs/i18n/README.ko.md) · [Español](docs/i18n/README.es.md) · [日本語](docs/i18n/README.ja.md)
+
 [![CI](https://github.com/bitovvnew/agentcorp/actions/workflows/ci.yml/badge.svg)](https://github.com/bitovvnew/agentcorp/actions/workflows/ci.yml)
-![version](https://img.shields.io/badge/version-0.1.1-3987e5)
+![version](https://img.shields.io/badge/version-0.1.2-3987e5)
 ![node](https://img.shields.io/badge/node-%E2%89%A520-199e70)
 ![license](https://img.shields.io/badge/license-MIT-c98500)
 ![runs keyless](https://img.shields.io/badge/demo-no%20API%20key-d95926)
 
 ```bash
-npx --yes github:bitovvnew/agentcorp#v0.1.1 demo
+npx --yes github:bitovvnew/agentcorp#v0.1.2 demo
 ```
 
 <img src="docs/img/dashboard.png" alt="AgentCorp dashboard: league table, valuation race on a log scale, company KPIs, cash and funding chart, weekly P&L" width="100%">
@@ -47,24 +49,36 @@ The result reads like a startup drama, and it doubles as a **benchmark for long-
 No API key needed. Four built-in CEO personalities compete in the demo league:
 
 ```bash
-npx --yes github:bitovvnew/agentcorp#v0.1.1 demo
+npx --yes github:bitovvnew/agentcorp#v0.1.2 demo
 ```
 
-The command opens the live dashboard at http://127.0.0.1:4747. To run from a checkout:
+The command opens the live dashboard at http://127.0.0.1:4747. To run the same demo from a checkout:
 
 ```bash
 git clone https://github.com/bitovvnew/agentcorp && cd agentcorp
 npm ci
-npm start
+npm run demo
 ```
+
+### Free: no credit card
+
+AgentCorp can run a real LLM league for free. Browser setup has a **Free setup** button, and the terminal wizard has `agentcorp setup --free`. Both pick only models that cost nothing, spread across providers:
+
+- **Ollama**: any model installed locally (found automatically).
+- **Groq** and **Google Gemini**: their free tiers. Get a key without a card at console.groq.com or aistudio.google.com.
+- **OpenRouter**: the models it lists at zero price (IDs ending in `:free`).
+
+Model names are never hard-coded. Each list comes from the provider's own API, and free models are marked in the picker. Free tiers have rate limits; AgentCorp throttles its requests and falls back to autopilot for a week if a provider refuses.
 
 ### Put real models in charge
 
-Open the browser setup to discover installed Ollama models, validate credentials and choose the CEOs for your league. For terminal setup, drop `--web`.
+The first launch opens the browser setup to discover installed Ollama models, validate credentials and choose the CEOs for your league. Later launches use the saved league.
 
 ```bash
-npx --yes github:bitovvnew/agentcorp#v0.1.1 setup --web
+npx --yes github:bitovvnew/agentcorp#v0.1.2
 ```
+
+From a checkout, run `setup.bat` on Windows or `./setup.sh` on macOS and Linux. Both scripts install the locked dependencies and open browser setup. After `npm ci`, `npm start` follows the same first-run flow, and `node bin/agentcorp.js setup` opens the terminal wizard.
 
 If you already set up keys in the environment, list the available models and use their IDs in `--brains`:
 
@@ -82,7 +96,8 @@ Each company gets its own CEO model. They all compete in the same market with th
 | `openai:<model>` | OpenAI Chat Completions | `OPENAI_API_KEY` |
 | `gemini:<model>` | Google Gemini API | `GEMINI_API_KEY` |
 | `ollama:<model>` | Local models through Ollama | Ollama running with an installed model |
-| `openrouter:<model>` | OpenRouter catalog | `OPENROUTER_API_KEY` |
+| `openrouter:<model>` | OpenRouter catalog, including free models | `OPENROUTER_API_KEY` |
+| `groq:<model>` | Groq (free tier available) | `GROQ_API_KEY` |
 | `openai-compatible:<model>` | vLLM, LM Studio and other compatible servers | `AGENTCORP_BASE_URL`, `AGENTCORP_API_KEY` |
 
 LLM CEOs decide every 4 weeks by default (`--decide-every`). A surviving company in a 104-week season has 26 scheduled model decisions, plus any retries. Set `--max-tokens-agent` and `--max-tokens-total` to switch to autopilot after reported usage reaches those thresholds. In-flight decisions and retries can take usage past a threshold. Add `--token-charge 1` to charge the company ◈1 per reported token.
@@ -101,14 +116,14 @@ LLMs make mistakes, so every decision passes through a sanitizer (`sanitize()` i
 - **Shocks**: inject a funding freeze, VC mania, a recession, a viral moment, an outage or a poached engineer while it runs.
 - **Replays**: scrub through any week, download the replay, open it later or export it as one HTML file.
 - **Boardroom and stories**: open quarterly board decks, create an investor pitch, and share a season recap.
-- **Languages**: English, Russian, Kazakh and French for dashboard labels and built-in event templates. Live model memos retain their original wording.
+- **Languages**: English, Russian, Kazakh, French, Simplified Chinese, Korean, Spanish and Japanese for setup, dashboard labels and built-in event templates. Live model memos retain their original wording.
 
 <img src="docs/img/midseason.png" alt="Mid-season company view with valuation, runway, weekly financial results and operating metrics" width="100%">
 
 ## Commands
 
 ```text
-agentcorp                              Saved league or the keyless demo
+agentcorp                              First-run browser setup or saved league
 agentcorp demo                         Keyless demo league, live in your browser
 agentcorp setup [--web]                Configure providers, models and a league
 agentcorp models <provider>            List models available to your account or Ollama

@@ -407,5 +407,10 @@
   "cli.wizard.weeks": "Semaines :",
   "cli.wizard.savedTo": "Enregistré dans {file}",
   "cli.wizard.private": "Ce fichier contient vos clés. Il est ignoré par git ; ne le partagez pas.",
-  "cli.wizard.next": "Lancer la ligue :"
+  "cli.wizard.next": "Lancer la ligue :",
+  "setup.free": "Configuration gratuite",
+  "setup.freeBadge": "gratuit",
+  "setup.freeNote": "Pas de budget ? La configuration gratuite ne choisit que des modèles qui ne coûtent rien : un Ollama local, les offres gratuites de Groq et Gemini, et les modèles gratuits d’OpenRouter. Ajoutez une clé gratuite ci-dessus (ou lancez Ollama), puis cliquez sur Configuration gratuite.",
+  "setup.freeNone": "Aucun modèle gratuit trouvé. Lancez Ollama, ou ajoutez ci-dessus une clé gratuite Groq, Gemini ou OpenRouter.",
+  "cli.wizard.free": "Utiliser uniquement des modèles gratuits ({n} trouvés) ? (y/n)"
 }

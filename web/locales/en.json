@@ -407,5 +407,10 @@
   "cli.wizard.weeks": "Weeks:",
   "cli.wizard.savedTo": "Saved to {file}",
   "cli.wizard.private": "This file holds your keys. It is git-ignored; do not share it.",
-  "cli.wizard.next": "Start the league:"
+  "cli.wizard.next": "Start the league:",
+  "setup.free": "Free setup",
+  "setup.freeBadge": "free",
+  "setup.freeNote": "No budget? Free setup picks only models that cost nothing: a local Ollama, the free tiers of Groq and Gemini, and OpenRouter’s free models. Add a free key above (or start Ollama), then press Free setup.",
+  "setup.freeNone": "No free models found yet. Start Ollama, or add a free Groq, Gemini or OpenRouter key above.",
+  "cli.wizard.free": "Use only free models ({n} found)? (y/n)"
 }

@@ -1,6 +1,6 @@
 {
   "name": "agentcorp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "AI Startup Simulator — a company of AI agents with payroll, runway, layoffs, pivots and funding rounds. Pit GPT, Claude, Gemini and Llama against each other in a startup league. Runs keyless in demo mode.",
   "type": "module",
   "bin": {
@@ -27,7 +27,7 @@
     "build": "tsc -p tsconfig.build.json",
     "prepare": "npm run build",
     "start": "npm run build && node bin/agentcorp.js",
-    "demo": "node bin/agentcorp.js demo",
+    "demo": "npm run build && node bin/agentcorp.js demo",
     "league": "node bin/agentcorp.js league --brains balanced,blitzscaler,bootstrapper,visionary --headless",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",

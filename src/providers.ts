@@ -2,7 +2,7 @@
 // Model names are never hard-coded: whatever the provider returns is what the user can pick.
 import { redact, registerSecret } from './security.js';
 
-export type ProviderId = 'openai' | 'anthropic' | 'gemini' | 'openrouter' | 'ollama';
+export type ProviderId = 'openai' | 'anthropic' | 'gemini' | 'openrouter' | 'groq' | 'ollama';
 
 export interface ProviderInfo {
   id: ProviderId;
@@ -11,19 +11,24 @@ export interface ProviderInfo {
   needsKey: boolean;
   keyUrl: string;
   keyHint: string;
+  /** The provider offers a no-cost tier (no card needed). */
+  freeTier?: boolean;
 }
 
 export const PROVIDERS: ProviderInfo[] = [
   { id: 'openai', label: 'OpenAI', env: 'OPENAI_API_KEY', needsKey: true, keyUrl: 'https://platform.openai.com/api-keys', keyHint: 'sk-…' },
   { id: 'anthropic', label: 'Anthropic', env: 'ANTHROPIC_API_KEY', needsKey: true, keyUrl: 'https://console.anthropic.com/settings/keys', keyHint: 'sk-ant-…' },
-  { id: 'gemini', label: 'Google Gemini', env: 'GEMINI_API_KEY', needsKey: true, keyUrl: 'https://aistudio.google.com/apikey', keyHint: 'AIza…' },
-  { id: 'openrouter', label: 'OpenRouter', env: 'OPENROUTER_API_KEY', needsKey: true, keyUrl: 'https://openrouter.ai/keys', keyHint: 'sk-or-…' },
-  { id: 'ollama', label: 'Ollama (local)', env: 'OLLAMA_BASE_URL', needsKey: false, keyUrl: 'https://ollama.com/download', keyHint: 'http://localhost:11434' },
+  { id: 'gemini', label: 'Google Gemini', env: 'GEMINI_API_KEY', needsKey: true, keyUrl: 'https://aistudio.google.com/apikey', keyHint: 'AIza…', freeTier: true },
+  { id: 'openrouter', label: 'OpenRouter', env: 'OPENROUTER_API_KEY', needsKey: true, keyUrl: 'https://openrouter.ai/keys', keyHint: 'sk-or-…', freeTier: true },
+  { id: 'groq', label: 'Groq', env: 'GROQ_API_KEY', needsKey: true, keyUrl: 'https://console.groq.com/keys', keyHint: 'gsk_…', freeTier: true },
+  { id: 'ollama', label: 'Ollama (local)', env: 'OLLAMA_BASE_URL', needsKey: false, keyUrl: 'https://ollama.com/download', keyHint: 'http://localhost:11434', freeTier: true },
 ];
 
 export interface ModelInfo {
   id: string;
   label: string;
+  /** Costs nothing to call (local, a free model, or a provider's free tier). */
+  free?: boolean;
 }
 
 export interface ProbeResult {
@@ -53,6 +58,7 @@ export function detectEnv(): Record<ProviderId, boolean> {
     anthropic: !!(envKey('anthropic') || process.env.ANTHROPIC_AUTH_TOKEN),
     gemini: !!envKey('gemini'),
     openrouter: !!envKey('openrouter'),
+    groq: !!envKey('groq'),
     ollama: false,
   };
 }
@@ -90,8 +96,21 @@ export async function probe(p: ProviderId, key?: string, baseURL?: string): Prom
       case 'openrouter': {
         if (!k) throw new Error('missing key');
         await getJson('https://openrouter.ai/api/v1/key', { authorization: `Bearer ${k}` });
-        const j = (await getJson('https://openrouter.ai/api/v1/models', {})) as { data?: { id: string; name?: string }[] };
-        return { ok: true, models: sortModels((j.data ?? []).map((m) => ({ id: m.id, label: m.name || m.id }))) };
+        const j = (await getJson('https://openrouter.ai/api/v1/models', {})) as { data?: { id: string; name?: string; pricing?: { prompt?: string; completion?: string } }[] };
+        return {
+          ok: true,
+          models: sortModels((j.data ?? []).map((m) => ({
+            id: m.id, label: m.name || m.id,
+            free: m.id.endsWith(':free') || (Number(m.pricing?.prompt) === 0 && Number(m.pricing?.completion) === 0),
+          }))),
+        };
+      }
+      case 'groq': {
+        if (!k) throw new Error('missing key');
+        const j = (await getJson('https://api.groq.com/openai/v1/models', { authorization: `Bearer ${k}` })) as { data?: { id: string; active?: boolean }[] };
+        const models = (j.data ?? []).filter((m) => m.active !== false && !NOT_CHAT.test(m.id) && !/guard|tts|distil-whisper/i.test(m.id))
+          .map((m) => ({ id: m.id, label: m.id, free: true }));
+        return { ok: true, models: sortModels(models) };
       }
       case 'gemini': {
         if (!k) throw new Error('missing key');
@@ -100,7 +119,7 @@ export async function probe(p: ProviderId, key?: string, baseURL?: string): Prom
         };
         const models = (j.models ?? [])
           .filter((m) => (m.supportedGenerationMethods ?? []).includes('generateContent'))
-          .map((m) => ({ id: m.name.replace(/^models\//, ''), label: m.displayName || m.name }))
+          .map((m) => ({ id: m.name.replace(/^models\//, ''), label: m.displayName || m.name, free: true }))
           .filter((m) => !NOT_CHAT.test(m.id));
         return { ok: true, models: sortModels(models) };
       }
@@ -117,12 +136,35 @@ export async function probe(p: ProviderId, key?: string, baseURL?: string): Prom
       case 'ollama': {
         const base = ollamaBase(baseURL);
         const j = (await getJson(`${base}/api/tags`, {}, 2_500)) as { models?: { name: string }[] };
-        return { ok: true, models: sortModels((j.models ?? []).map((m) => ({ id: m.name, label: m.name }))) };
+        return { ok: true, models: sortModels((j.models ?? []).map((m) => ({ id: m.name, label: m.name, free: true }))) };
       }
     }
   } catch (err) {
     return { ok: false, models: [], error: redact(err) };
   }
+}
+
+/**
+ * Pick up to `n` CEO brains that cost nothing to run, spread across providers so the league is a real
+ * contest: local Ollama first, then Groq and Gemini free tiers, then OpenRouter's free models.
+ */
+export function pickFreeBrains(models: Partial<Record<ProviderId, ModelInfo[]>>, n = 4): string[] {
+  const order: ProviderId[] = ['ollama', 'groq', 'gemini', 'openrouter'];
+  const prefer = (p: ProviderId, list: ModelInfo[]) => {
+    const free = list.filter((m) => m.free);
+    // Favour general chat models over tiny/vision/preview variants without hard-coding names.
+    const score = (m: ModelInfo) => (/(vision|embed|preview|exp|guard|tts|audio|image)/i.test(m.id) ? 1 : 0) + (p === 'gemini' && /flash/i.test(m.id) ? -1 : 0) + (/instruct|chat|it$/i.test(m.id) ? -0.5 : 0);
+    return [...free].sort((a, b) => score(a) - score(b));
+  };
+  const queues = order.map((p) => prefer(p, models[p] ?? []).map((m) => `${p}:${m.id}`));
+  const out: string[] = [];
+  for (let round = 0; out.length < n && queues.some((q) => q.length); round++) {
+    for (const q of queues) {
+      const next = q.shift();
+      if (next && out.length < n) out.push(next);
+    }
+  }
+  return out;
 }
 
 /** Probe everything that can be probed without asking the user anything. */

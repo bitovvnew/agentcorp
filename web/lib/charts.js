@@ -66,7 +66,7 @@ export function lineChart(el, o, ctx) {
   for (const w of weekTicks(xMax, pw)) svg += `<text class="ax" x="${X(w)}" y="${H - 6}" text-anchor="middle">${esc(ctx.fmtX(w))}</text>`;
   for (const r of o.refLines || []) {
     svg += `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(r.y)}" y2="${Y(r.y)}" stroke="${C.mute}" stroke-dasharray="2 4"/>`;
-    svg += `<text class="ax ref" x="${W - m.r}" y="${Y(r.y) - 6}" text-anchor="end">${esc(r.label)}</text>`;
+    svg += `<text class="ax ref" x="${m.l + 6}" y="${Y(r.y) - 6}">${esc(r.label)}</text>`;
   }
   const labels = [];
   o.series.forEach((s, si) => {

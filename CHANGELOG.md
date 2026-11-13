@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.2 — 2026-11-12
+
+- Added complete Simplified Chinese, Korean, Spanish and Japanese translations for browser and terminal setup, dashboard and built-in simulation events.
+- The default first launch opens the browser setup. The explicit `demo` command runs the same keyless league as before.
+- Added `setup.bat` and `setup.sh` launchers for provider onboarding from a checkout.
+- Browser setup validates keys when pasted and keeps the newly discovered model selection.
+- Free league: a Free setup button in the browser and `agentcorp setup --free` in the terminal pick only no-cost models (local Ollama, Groq and Gemini free tiers, OpenRouter zero-price models), spread across providers.
+- Groq provider (`groq:<model>`, `GROQ_API_KEY`), with models listed from its API.
+- Free models are marked in every model picker; OpenRouter pricing is read from its catalog.
+- README translations in `docs/i18n/` for all eight languages.
+
 ## 0.1.1 — 2026-11-12
 
 - A redesigned dashboard with a replay scrubber, market wire, quarterly board decks, investor pitches and downloadable season recaps.

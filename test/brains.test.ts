@@ -147,3 +147,32 @@ describe('LLM adapters (mocked network)', () => {
     expect(sim.events.some((e) => e.kind === 'memo' && e.text === 'Ship it.')).toBe(true);
   });
 });
+
+describe('free models', () => {
+  it('spreads free picks across providers, local first, and skips paid models', async () => {
+    const { pickFreeBrains } = await import('../src/providers.js');
+    const picks = pickFreeBrains({
+      ollama: [{ id: 'local-a', label: 'a', free: true }],
+      openrouter: [{ id: 'paid', label: 'p' }, { id: 'x:free', label: 'x', free: true }, { id: 'y:free', label: 'y', free: true }],
+      groq: [{ id: 'g1', label: 'g', free: true }],
+    }, 4);
+    expect(picks).toEqual(['ollama:local-a', 'groq:g1', 'openrouter:x:free', 'openrouter:y:free']);
+    expect(pickFreeBrains({}, 4)).toEqual([]);
+  });
+
+  it('marks OpenRouter free models and lists Groq models via the API', async () => {
+    const { probe } = await import('../src/providers.js');
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/key')) return new Response('{}');
+      if (url.includes('openrouter')) return new Response(JSON.stringify({ data: [{ id: 'm:free', pricing: { prompt: '0', completion: '0' } }, { id: 'paid', pricing: { prompt: '0.001', completion: '0.002' } }] }));
+      return new Response(JSON.stringify({ data: [{ id: 'groq-chat' }, { id: 'whisper-large', active: true }] }));
+    }));
+    const or = await probe('openrouter', 'sk-or-test-key-123456');
+    expect(or.models.find((m) => m.id === 'm:free')?.free).toBe(true);
+    expect(or.models.find((m) => m.id === 'paid')?.free).toBe(false);
+    const gq = await probe('groq', 'gsk_test_key_1234567');
+    expect(gq.models.map((m) => m.id)).toEqual(['groq-chat']);
+    vi.stubEnv('GROQ_API_KEY', 'gsk_test_key_1234567');
+    expect(createBrain('groq:groq-chat').id).toBe('groq:groq-chat');
+  });
+});

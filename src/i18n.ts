@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const LANGS = ['en', 'ru', 'kk', 'fr'] as const;
+export const LANGS = ['en', 'ru', 'kk', 'fr', 'zh', 'ko', 'es', 'ja'] as const;
 export type Lang = (typeof LANGS)[number];
 
 const DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'web', 'locales');
